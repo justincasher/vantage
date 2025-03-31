@@ -60,20 +60,20 @@ class ItemStatus(enum.Enum):
     ERROR = "Error"     # General error state
 
     # LaTeX Processing States
-    PENDING_LATEX = "PendingLatex"                 # Ready for LaTeX generation
-    LATEX_GENERATION_IN_PROGRESS = "LatexGenInProgress"  # LLM is generating LaTeX
-    PENDING_LATEX_REVIEW = "PendingLatexReview"      # LaTeX generated, awaiting review
-    LATEX_REVIEW_IN_PROGRESS = "LatexReviewInProgress" # LLM is reviewing LaTeX
-    LATEX_ACCEPTED = "LatexAccepted"             # LaTeX generated and reviewer accepted
-    LATEX_REJECTED_FINAL = "LatexRejectedFinal"    # LaTeX rejected after max review cycles
+    PENDING_LATEX = "PendingLatex"                      # Ready for LaTeX generation
+    LATEX_GENERATION_IN_PROGRESS = "LatexGenInProgress" # LLM is generating LaTeX
+    PENDING_LATEX_REVIEW = "PendingLatexReview"         # LaTeX generated, awaiting review
+    LATEX_REVIEW_IN_PROGRESS = "LatexReviewInProgress"  # LLM is reviewing LaTeX
+    LATEX_ACCEPTED = "LatexAccepted"                    # LaTeX generated and reviewer accepted
+    LATEX_REJECTED_FINAL = "LatexRejectedFinal"         # LaTeX rejected after max review cycles
 
     # Lean Processing States
-    PENDING_LEAN = "PendingLean"                   # Ready for Lean code generation (assumes LATEX_ACCEPTED?)
+    PENDING_LEAN = "PendingLean"                        # Ready for Lean code generation (assumes LATEX_ACCEPTED?)
     LEAN_GENERATION_IN_PROGRESS = "LeanGenInProgress"   # LLM is generating Lean code
-    LEAN_VALIDATION_PENDING = "LeanValidationPending" # Lean generated, awaiting check_and_compile
+    LEAN_VALIDATION_PENDING = "LeanValidationPending"   # Lean generated, awaiting check_and_compile
     LEAN_VALIDATION_IN_PROGRESS = "LeanValidationInProgress" # check_and_compile is running
-    LEAN_VALIDATION_FAILED = "LeanValidationFailed"   # check_and_compile failed
-    PROVEN = "Proven"                           # Lean code successfully validated (Implies LATEX_ACCEPTED)
+    LEAN_VALIDATION_FAILED = "LeanValidationFailed"     # check_and_compile failed
+    PROVEN = "Proven"                                   # Lean code successfully validated (Implies LATEX_ACCEPTED)
 
     # Specific Proven States (Map to PROVEN for simplicity in logic, but retain for potential filtering)
     AXIOM_ACCEPTED = "Proven" # Axioms are accepted, not strictly proven
