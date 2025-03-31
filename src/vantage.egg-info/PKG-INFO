@@ -1,0 +1,240 @@
+Metadata-Version: 2.4
+Name: vantage
+Version: 0.1.0
+Summary: A project for automating Lean formalization.
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: license-file
+
+# Lean Automator
+
+Lean Automator is a Python project designed to build and manage a mathematical knowledge base (KB). It leverages Lean 4 for formal verification, integrates with Large Language Models (specifically Google's Gemini) for potential code/description generation, and uses an SQLite database for persistent storage of mathematical items and their metadata.
+
+## Features
+
+* **Knowledge Base Storage:** Defines and stores mathematical items (`KBItem`: Theorems, Definitions, Axioms, etc.) in an SQLite database (`kb_storage.py`).
+* **Lean Interaction:** Verifies and compiles Lean 4 code snippets using the `lake` build tool. It manages dependencies between KB items by creating temporary Lake projects and utilizes existing `.olean` files for faster builds (`lean_interaction.py`).
+* **LLM Integration:** Interacts with the Google Gemini API for tasks like generating Lean code or natural language descriptions. Includes features like asynchronous calls, automatic retries with exponential backoff, and cost tracking (`llm_call.py`).
+* **Structured Data:** Uses dataclasses (`KBItem`, `LatexLink`, `ItemStatus`, `ItemType`) for well-defined knowledge representation.
+* **Dependency Management:** Tracks dependencies between KB items.
+* **State Tracking:** Monitors the status of each KB item (e.g., `INITIALIZED`, `VERIFIED`, `PROVEN`, `ERROR`).
+* **Artifact Storage:** Stores compiled Lean `.olean` files directly in the database as BLOBs.
+* **Cost Tracking:** Tracks token usage and estimates costs for Gemini API calls based on configurable rates.
+
+## Project Structure
+
+```
+.
+├── pytest.ini
+├── requirements.txt
+├── src
+│   └── lean_automator
+│       ├── __init__.py
+│       ├── kb_storage.py
+│       ├── lean_interaction.py
+│       └── llm_call.py
+└── tests
+    ├── __init__.py
+    ├── integration
+    │   ├── __init__.py
+    │   ├── test_kb_storage_integration.py
+    │   ├── test_lean_interaction_integration.py
+    │   └── test_llm_call_integration.py
+    └── unit
+        ├── __init__.py
+        ├── test_kb_storage_unit.py
+        ├── test_lean_interaction_unit.py
+        └── test_llm_call_unit.py
+```
+
+## Prerequisites
+
+* **Python:** Version 3.8 or higher is recommended.
+* **Lean 4 & Lake:** You need a working installation of Lean 4 and its build tool, Lake. Ensure the `lake` executable is available in your system's PATH or provide the full path during configuration/usage. See [Lean Installation Guide](https://docs.lean-lang.org/lean4/doc/quickstart.html).
+* **Google AI API Key:** To use the LLM features, you need an API key for Google's Generative AI (Gemini). You can get one from [Google AI Studio](https://aistudio.google.com/).
+
+## Installation
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repository-url>
+    cd lean-automator
+    ```
+
+2.  **Create and activate a virtual environment (recommended):**
+    ```bash
+    # On macOS/Linux
+    python3 -m venv venv
+    source venv/bin/activate
+
+    # On Windows
+    python -m venv venv
+    .\venv\Scripts\activate
+    ```
+
+3.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+## Configuration
+
+The application relies on environment variables for configuration, particularly for API keys and paths. You can set these directly in your shell, or use a `.env` file (by installing `python-dotenv` - `pip install python-dotenv` - and loading it in your entry script).
+
+**Required:**
+
+* `GEMINI_API_KEY`: Your Google AI (Gemini) API key.
+* `DEFAULT_GEMINI_MODEL`: The default Gemini model name to use (e.g., `gemini-1.5-flash-latest`).
+
+**Optional (with defaults):**
+
+* `GEMINI_MODEL_COSTS`: A JSON string specifying the input and output costs *per million tokens* for different models.
+    * **Format:** `'{"model-name": {"input": <cost_in_usd>, "output": <cost_in_usd>}}'`
+    * **Example:** `'{"gemini-1.5-flash-latest": {"input": 0.35, "output": 0.70}}'`
+    * **Default:** `'{}'` (No costs tracked unless specified).
+* `KB_DB_PATH`: The file path for the SQLite database.
+    * **Default:** `knowledge_base.sqlite` (will be created in the directory where the script is run if it doesn't exist).
+* `GEMINI_MAX_RETRIES`: Maximum number of retry attempts for failed Gemini API calls.
+    * **Default:** `3` (meaning 1 initial call + 3 retries = 4 total attempts).
+* `GEMINI_BACKOFF_FACTOR`: Multiplicative factor for calculating retry delays (delay = factor \* 2^attempt).
+    * **Default:** `1.0`.
+
+## Usage
+
+*(This section provides high-level examples. You'll need to integrate these components into your specific workflow.)*
+
+1.  **Initialize the Database:**
+    Ensure the database schema exists before performing operations.
+    ```python
+    from lean_automator.kb_storage import initialize_database
+
+    # Uses KB_DB_PATH environment variable or default 'knowledge_base.sqlite'
+    initialize_database()
+    ```
+
+2.  **Create and Save a Knowledge Base Item:**
+    ```python
+    from lean_automator.kb_storage import KBItem, ItemType, ItemStatus, save_kb_item
+
+    # Create a simple definition item
+    new_def = KBItem(
+        unique_name="Basic.Nat.Zero",
+        item_type=ItemType.DEFINITION,
+        lean_code="def zero : Nat := 0",
+        description_nl="Defines the natural number zero.",
+        topic="Basic.Nat",
+        status=ItemStatus.INITIALIZED
+    )
+
+    # Save it to the database (uses KB_DB_PATH or default)
+    saved_def = save_kb_item(new_def)
+    print(f"Saved item with ID: {saved_def.id}")
+    ```
+
+3.  **Interact with the Gemini API:**
+    ```python
+    import asyncio
+    from lean_automator.llm_call import GeminiClient, GeminiCostTracker
+
+    # Initialize tracker (reads GEMINI_MODEL_COSTS from env)
+    cost_tracker = GeminiCostTracker()
+
+    # Initialize client (reads API key, model, retries, etc., from env)
+    client = GeminiClient(cost_tracker=cost_tracker)
+
+    async def run_generation():
+        try:
+            prompt = "Explain the concept of a limit in calculus in simple terms."
+            # Uses default model specified in env var DEFAULT_GEMINI_MODEL
+            response_text = await client.generate(prompt)
+            print("LLM Response:", response_text)
+
+            # Print cost summary
+            summary = cost_tracker.get_summary()
+            print("\nAPI Usage Summary:")
+            import json
+            print(json.dumps(summary, indent=2))
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+    # Run the async function
+    asyncio.run(run_generation())
+    ```
+
+4.  **Check and Compile a Lean Item:**
+    This function fetches the item and its dependencies, creates a temporary Lake project, places known `.olean` files, and runs `lake build`. It updates the item's status and stores the new `.olean` file on success.
+    ```python
+    from lean_automator.lean_interaction import check_and_compile_item
+    from lean_automator.kb_storage import save_kb_item, KBItem, ItemType, ItemStatus # Assume Basic.Nat.Zero exists
+
+    # Create a theorem depending on the definition
+    thm_item = KBItem(
+        unique_name="Basic.Nat.ZeroIsNotOne",
+        item_type=ItemType.THEOREM,
+        lean_code="import Basic.Nat.Zero\n\ntheorem zero_ne_one : zero ≠ 1 := by decide",
+        description_nl="Theorem stating that zero is not equal to one.",
+        topic="Basic.Nat",
+        dependencies=["Basic.Nat.Zero"], # Depends on the definition
+        status=ItemStatus.INITIALIZED
+    )
+    save_kb_item(thm_item)
+
+    # Attempt to compile the theorem
+    # Assumes 'lake' is in PATH and uses default DB path
+    success, message = check_and_compile_item(unique_name="Basic.Nat.ZeroIsNotOne")
+
+    if success:
+        print(f"Compilation successful for Basic.Nat.ZeroIsNotOne: {message}")
+        # The item in the DB is now updated with status=VERIFIED and the .olean file
+    else:
+        print(f"Compilation failed for Basic.Nat.ZeroIsNotOne: {message}")
+        # The item in the DB is now updated with status=ERROR and the error log
+    ```
+
+## Testing
+
+The project includes unit and integration tests using `pytest`.
+
+1.  **Install test dependencies:**
+    ```bash
+    pip install pytest pytest-asyncio
+    ```
+
+2.  **Run tests:**
+    Navigate to the project root directory (where `pytest.ini` is located).
+
+    * **Run all tests:**
+        ```bash
+        pytest
+        ```
+        * **Note:** Running all tests includes integration tests. These tests (`tests/integration`) interact with the actual database, the Gemini API, and the Lean toolchain. They are marked with the `integration` marker and might be slow or incur costs (for API calls). Ensure you have set the necessary environment variables (`GEMINI_API_KEY`, potentially `KB_DB_PATH` if not using the default) and that `lake` is installed and accessible in your PATH before running them.
+
+    * **Run only unit tests (excluding integration tests):**
+        The project uses markers defined in `pytest.ini` to categorize tests. To run faster checks without external dependencies, you can exclude integration tests:
+        ```bash
+        pytest -m "not integration"
+        ```
+
+    * **Run only integration tests:**
+        If you specifically want to run only the integration tests:
+        ```bash
+        pytest -m integration
+        ```
+
+    * **Exclude slow tests:**
+        Some tests might be marked as `slow`. To exclude these:
+        ```bash
+        pytest -m "not slow"
+        ```
+
+    You can combine markers as needed (e.g., `pytest -m "integration and not slow"`).
+
+## Contributing
+
+Contributions are welcome! Please follow standard practices like creating issues for bugs or feature requests and submitting pull requests for changes. (Add more specific guidelines if desired).
+
+## License
+
+This project is licensed under the terms of the MIT License. See the [LICENSE](LICENSE) file for the full text.

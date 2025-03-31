@@ -1,0 +1,20 @@
+# Environment configuration file - Contains sensitive info sometimes!
+# DO NOT commit your actual .env file if it holds API keys etc.
+.env
+
+# SQLite database files
+# These store data, not source code, and shouldn't be version controlled.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Pytest cache
+.pytest_cache/
+
+# Virtual environment
+venv/
