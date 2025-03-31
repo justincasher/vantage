@@ -16,6 +16,10 @@ Lean Automator is a Python project designed to build and manage a mathematical k
 * **State Tracking:** Monitors the status of each KB item (e.g., `PENDING_LEAN`, `LEAN_VALIDATION_FAILED`, `PROVEN`, `ERROR`).
 * **Cost Tracking:** Tracks token usage and estimates costs for Gemini API calls based on configurable rates.
 
+## Contributing
+
+I'm actively looking for collaborators on this project! If you're interested in contributing or discussing ideas, please email me directly at justinchadwickasher@gmail.com.
+
 ## Project Structure
 
 ```
@@ -309,11 +313,7 @@ The project includes unit and integration tests using `pytest`.
         pytest -m "not slow"
         ```
 
-    You can combine markers as needed (e.g., `pytest -m "integration and not slow"`).
-
-## Contributing
-
-Contributions are welcome! Please follow standard practices like creating issues for bugs or feature requests and submitting pull requests for changes. (Add more specific guidelines if desired).
+    You can combine markers as needed (e.g., `pytest -m "integration and not slow"`)
 
 ## License
 
