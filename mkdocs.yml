@@ -42,10 +42,6 @@ nav:
   - 'Testing': 'testing.md'
   - 'Project Structure': 'project_structure.md'
   - 'Contributing': 'contributing.md'
-  - 'API Reference': # Optional: Placeholder if you generate API docs later
-      - 'Knowledge Base Storage': 'api/kb_storage.md'
-      - 'Lean Interaction': 'api/lean_interaction.md'
-      # Add more API files as needed
 
 # Markdown Extensions (Enable extra formatting features)
 markdown_extensions:
