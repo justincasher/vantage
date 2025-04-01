@@ -1,6 +1,6 @@
-# Welcome to Lean Automator Documentation
+# Welcome to Vantage Documentation
 
-Lean Automator is a Python project designed to build and manage a mathematical knowledge base (KB). It leverages Lean 4 for formal verification, integrates with Large Language Models (specifically Google's Gemini) for potential code/description generation, and uses an SQLite database for persistent storage.
+Vantage is a Python project designed to build and manage a mathematical knowledge base (KB). It leverages Lean 4 for formal verification, integrates with Large Language Models (specifically Google's Gemini) for potential code/description generation, and uses an SQLite database for persistent storage.
 
 This documentation provides detailed information on setting up, configuring, and using Lean Automator.
 
