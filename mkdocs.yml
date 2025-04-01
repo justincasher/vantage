@@ -41,7 +41,9 @@ nav:
   - 'Usage': 'usage.md'
   - 'Testing': 'testing.md'
   - 'Project Structure': 'project_structure.md'
-  - 'Contributing': 'contributing.md'
+  - 'Contributing':
+    - 'How to Contribute': 'contributing.md'
+    - 'Code of Conduct': 'code_of_conduct.md'
 
 # Markdown Extensions (Enable extra formatting features)
 markdown_extensions:
