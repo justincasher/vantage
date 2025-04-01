@@ -1,3 +1,4 @@
+```
 ├── LICENSE
 ├── README.md
 ├── pyproject.toml
@@ -41,3 +42,6 @@
     ├── lake-manifest.json
     ├── lakefile.toml
     └── lean-toolchain
+```
+
+*(Note: `.sqlite` database files and `.env` are typically generated/created in the root but omitted from the source structure example)*
