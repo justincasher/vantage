@@ -30,11 +30,9 @@ For detailed instructions on setup, configuration, usage, and more, please refer
 
 ## Contributing
 
-<<<<<<< HEAD
 Vantage is under active development and contributions are highly welcome! If you're interested in helping shape the project, please review the **[Contributing Guide](docs/contributing.md)** for information on how to get started. You can also feel free to reach out directly via email at `justinchadwickasher@gmail.com` with any questions, ideas, or offers to help.
-=======
+
 We are actively looking for collaborators! Please see the [Contributing Guide](docs/contributing.md) or email Justin Asher directly at justinchadwickasher@gmail.com.
->>>>>>> 6ae09928c5e54191b0fcf8e683649eab5986f0a7
 
 ## Project Structure
 
