@@ -30,7 +30,7 @@ For detailed instructions on setup, configuration, usage, and more, please refer
 
 ## Contributing
 
-We are actively looking for collaborators! Please see the [Contributing Guide](docs/contributing.md) or email Justin Chadwick Asher directly at justinchadwickasher@gmail.com.
+We are actively looking for collaborators! Please see the [Contributing Guide](docs/contributing.md) or email Justin Asher directly at justinchadwickasher@gmail.com.
 
 ## Project Structure
 
