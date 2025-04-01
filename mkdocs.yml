@@ -1,0 +1,62 @@
+# Project Information
+site_name: Vantage Documentation
+# !! Replace with your actual final domain once configured !!
+site_url: https://vantageproject.org 
+site_description: 'Documentation for Vantage: A large, verified mathematical knowledge base in Lean 4'
+
+# Repository
+repo_url: https://github.com/justincasher/vantage
+repo_name: 'vantage'          # Name displayed for the link
+edit_uri: 'edit/master/docs/' # Allows direct links to edit pages on GitHub (adjust 'main' if your branch is different)
+
+# Theme Configuration (using mkdocs-material)
+theme:
+  name: material
+  # logo: assets/logo.png # Optional: Add a logo image file to docs/assets/
+  # favicon: assets/favicon.png # Optional: Add a favicon image file to docs/assets/
+  features:
+    - navigation.tabs     # Use top-level sections as tabs
+    - navigation.sections # Expand sections in the side navigation
+    - navigation.top      # Back-to-top button
+    - search.suggest      # Autocomplete suggestions in search
+    - search.highlight    # Highlight search terms on results page
+    - content.code.annotate # Allows code annotations
+    - content.code.copy   # Copy button for code blocks
+  palette: # Optional: Allow light/dark mode toggle
+    - scheme: default     # Default light mode
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate     # Default dark mode
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+# Navigation Structure (Mirrors your "Main Sections")
+# Map Nav Title to the source markdown file in the 'docs' folder
+nav:
+  - 'Welcome': 'index.md'
+  - 'Installation & Setup': 'installation.md'
+  - 'Configuration': 'configuration.md'
+  - 'Usage': 'usage.md'
+  - 'Testing': 'testing.md'
+  - 'Project Structure': 'project_structure.md'
+  - 'Contributing': 'contributing.md'
+  - 'API Reference': # Optional: Placeholder if you generate API docs later
+      - 'Knowledge Base Storage': 'api/kb_storage.md'
+      - 'Lean Interaction': 'api/lean_interaction.md'
+      # Add more API files as needed
+
+# Markdown Extensions (Enable extra formatting features)
+markdown_extensions:
+  - admonition           # Adds nice colored boxes for notes, warnings, etc.
+  - pymdownx.details     # Collapsible sections
+  - pymdownx.superfences # Allows nesting code blocks, diagrams, etc.
+  - pymdownx.highlight:  # Code highlighting configuration
+      anchor_linenums: true
+  - pymdownx.inlinehilite # Inline code highlighting
+  - pymdownx.snippets    # Include parts of other files
+  - pymdownx.tabbed:     # Tabbed content blocks
+      alternate_style: true
+  - toc:                 # Table of contents generation
+      permalink: true    # Add links to headings

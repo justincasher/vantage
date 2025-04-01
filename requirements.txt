@@ -18,6 +18,8 @@ httplib2==0.22.0
 idna==3.10
 iniconfig==2.1.0
 magicmock==0.3
+mkdocs>=1.5
+mkdocs-material>=9.0
 numpy==2.2.4
 packaging==24.2
 pillow==11.1.0
