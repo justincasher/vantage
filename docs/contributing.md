@@ -4,7 +4,7 @@ We're excited that you're interested in contributing to this project! Collaborat
 
 ## Code of Conduct
 
-Please note that this project is released with a Contributor Code of Conduct. By participating in this project, you agree to abide by its terms, available in the [**code_of_conduct.md**](code_of_conduct.md) file.
+Please note that this project is released with a Contributor Code of Conduct. By participating in this project, you agree to abide by its terms, available in the [**code of conduct**](code_of_conduct.md) file.
 
 ## How to Contribute
 
