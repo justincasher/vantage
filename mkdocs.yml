@@ -1,6 +1,5 @@
 # Project Information
 site_name: Vantage Documentation
-# !! Replace with your actual final domain once configured !!
 site_url: https://vantageproject.org 
 site_description: 'Documentation for Vantage: A large, verified mathematical knowledge base in Lean 4'
 

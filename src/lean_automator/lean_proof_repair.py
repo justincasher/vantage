@@ -1,4 +1,18 @@
-# File: src/lean_automator/lean_proof_repair.py
+# File: lean_proof_repair.py
+
+"""Attempts heuristic automated repairs for common Lean compilation errors.
+
+This module provides functionality to analyze Lean compilation error logs and
+attempt simple, pattern-based repairs on the corresponding Lean code.
+The goal is to automatically fix common, easily identifiable issues that might
+arise from LLM code generation, potentially reducing the number of LLM retry
+cycles needed.
+
+Note: Currently, specific repair handlers (like for 'no goals to be solved')
+are disabled, and the main function `attempt_proof_repair` will always return
+indicating no fix was applied. Future handlers for other error patterns can be
+added here.
+"""
 
 import re
 import logging
@@ -13,14 +27,23 @@ NO_GOALS_ERROR_LINE_REGEX = re.compile(r"^error:.*?\.lean:(\d+):\d+:\s*no goals 
 # Regex to find Lean errors originating from a source file (path:line:col: message)
 LEAN_SOURCE_ERROR_REGEX = re.compile(r"^error:.*?\.lean:\d+:\d+:.*$", re.MULTILINE)
 
-# --- Helper functions - can be kept or commented out if no longer used ---
+# --- Helper functions ---
 
 def _is_only_no_goals_error(error_log: str) -> bool:
-    """
-    Checks if the error log contains Lean source errors, and if ALL such errors
-    match the 'no goals to be solved' pattern, ignoring other non-Lean-source
-    lines starting with 'error:'.
-    (This check might still be useful for logging/analysis even if the fix is disabled)
+    """Checks if the only Lean source errors are 'no goals to be solved'. (Internal Helper)
+
+    Parses the error log, finds all lines matching the pattern of errors reported
+    from a `.lean` file, and checks if *all* of those specific lines also match
+    the 'no goals to be solved' error message. Ignores other lines starting with
+    'error:' that don't fit the Lean source error format.
+
+    Args:
+        error_log (str): The captured stderr/stdout from the Lean compilation process.
+
+    Returns:
+        bool: True if the only errors reported from `.lean` files match the
+        'no goals to be solved' pattern, False otherwise (including if no Lean
+        source errors are found or other types of errors are present).
     """
     if not error_log:
         return False
@@ -30,125 +53,152 @@ def _is_only_no_goals_error(error_log: str) -> bool:
     num_lean_source_errors = len(lean_source_errors)
 
     if num_lean_source_errors == 0:
-        logger.debug("No lines matching Lean source error pattern found in log.")
-        return False
+        logger.debug("No lines matching Lean source error pattern found in log for 'no goals' check.")
+        return False # No relevant errors found
 
     # Count how many of the errors match the specific "no goals" pattern
     num_no_goals_errors = len(NO_GOALS_ERROR_LINE_REGEX.findall(error_log))
 
+    # Check if all source file errors are specifically 'no goals' errors
     if num_lean_source_errors > 0 and num_lean_source_errors == num_no_goals_errors:
         logger.debug(f"Confirmed all {num_lean_source_errors} Lean source errors match 'no goals to be solved' pattern.")
         return True
     else:
-        logger.debug(f"Found {num_lean_source_errors} Lean source errors, but only {num_no_goals_errors} 'no goals' errors. Skipping fix.")
+        logger.debug(f"Not exclusively 'no goals' errors: Found {num_lean_source_errors} Lean source errors, but only {num_no_goals_errors} match 'no goals' pattern. Skipping fix.")
         return False
 
 
 def _fix_no_goals_error(lean_code: str, error_log: str) -> str:
-    """
-    Replaces lines identified by 'no goals to be solved' errors with the 'done' tactic.
-    (This function is currently not called by the disabled handler below)
+    """Replaces lines causing 'no goals' errors with the 'done' tactic. (Internal Helper - Currently Unused)
+
+    Parses the error log to find line numbers associated with 'no goals to be solved'
+    errors. It then replaces the content of those lines in the `lean_code` with the
+    `done` tactic, preserving indentation.
+
+    Note:
+        This function is currently not called by `attempt_proof_repair` as this
+        specific fix was found to be unreliable.
+
+    Args:
+        lean_code (str): The Lean code string.
+        error_log (str): The error log containing 'no goals to be solved' errors.
+
+    Returns:
+        str: The modified Lean code with problematic lines replaced by 'done',
+        or the original `lean_code` if no line numbers could be parsed or
+        if other issues occur.
     """
     lines_to_replace: Set[int] = set()
-    original_lines_content = {} # Store original line for logging/debugging if needed
+    # Extract line numbers from error messages
     for match in NO_GOALS_ERROR_LINE_REGEX.finditer(error_log):
         try:
             line_num = int(match.group(1))
-            if line_num > 0:
+            if line_num > 0: # Line numbers are 1-based
                 lines_to_replace.add(line_num)
         except (ValueError, IndexError):
             logger.warning(f"Failed to parse line number from 'no goals' error match: {match.group(0)}")
-            continue
+            continue # Skip if line number cannot be parsed
 
     if not lines_to_replace:
         logger.warning("Identified 'no goals' error pattern, but failed to extract line numbers for replacement.")
-        return lean_code
+        return lean_code # Return original code if no lines identified
 
-    logger.info(f"Attempting to replace Lean code lines with 'done': {sorted(list(lines_to_replace))}")
+    logger.info(f"Attempting automated fix: Replace Lean code lines {sorted(list(lines_to_replace))} with 'done'.")
 
     code_lines = lean_code.splitlines()
     modified_lines = []
     replaced_count = 0
+    # Iterate through original code lines and replace targeted lines
     for i, line in enumerate(code_lines):
-        current_line_num = i + 1
+        current_line_num = i + 1 # Convert 0-based index to 1-based line number
         if current_line_num in lines_to_replace:
-            original_lines_content[current_line_num] = line
-            indentation = re.match(r"^(\s*)", line).group(1) if re.match(r"^(\s*)", line) else ""
-            replacement_line = indentation + "done"
+            # Preserve original indentation
+            indentation_match = re.match(r"^(\s*)", line)
+            indentation = indentation_match.group(1) if indentation_match else ""
+            replacement_line = indentation + "done" # Replace with 'done'
             modified_lines.append(replacement_line)
             replaced_count += 1
-            logger.debug(f"Replacing line {current_line_num} ('no goals' error) with '{replacement_line}'. Original: {line.strip()}")
+            logger.debug(f"Replacing line {current_line_num} ('no goals' error) with '{replacement_line}'. Original: '{line.strip()}'")
         else:
+            # Keep non-targeted lines as they are
             modified_lines.append(line)
 
+    # Sanity check: Log if the number of replacements doesn't match expectations
     if replaced_count != len(lines_to_replace):
-        logger.warning(f"Expected to replace {len(lines_to_replace)} lines, but replaced {replaced_count}. Line numbers might be incorrect.")
+        logger.warning(f"Expected to replace {len(lines_to_replace)} lines for 'no goals' error, but replaced {replaced_count}. Line numbers might be incorrect or out of bounds.")
 
-    return "\n".join(modified_lines)
+    return "\n".join(modified_lines) # Return the potentially modified code
 
 
 # --- Public Function ---
 
 def attempt_proof_repair(lean_code: str, error_log: str) -> Tuple[bool, str]:
-    """
-    Attempts to automatically fix known, simple errors in generated Lean code
-    based on the provided error log. Currently, known handlers are disabled.
+    """Attempts to automatically repair simple, known Lean compilation errors.
+
+    Analyzes the `error_log` for specific, fixable error patterns. If a known
+    pattern is detected by an *enabled* handler, this function modifies the
+    `lean_code` to attempt a fix.
+
+    Currently, all specific repair handlers are disabled. Therefore, this function
+    will always return `(False, original_lean_code)`.
 
     Args:
-        lean_code: The Lean code string that failed compilation.
-        error_log: The stderr/stdout captured from the failed lean/lake build.
+        lean_code (str): The Lean code string that failed compilation.
+        error_log (str): The stderr/stdout captured from the failed `lake build`
+            or `lean` command.
 
     Returns:
-        A tuple: (fix_attempted_and_applied: bool, resulting_code: str).
-        Always returns (False, original_code) in the current configuration.
+        Tuple[bool, str]: A tuple containing:
+            - bool: `True` if a fix was attempted and resulted in modified code,
+              `False` otherwise (including if no matching error pattern was found,
+              if the relevant handler is disabled, or if an error occurred during
+              the fix attempt). Currently always `False`.
+            - str: The potentially modified Lean code string if a fix was applied,
+              otherwise the original `lean_code`. Currently always the original
+              `lean_code`.
     """
-    logger.debug("Attempting automated proof repair...")
-    original_code = lean_code # Keep original for comparison
+    logger.debug("Attempting automated proof repair (Note: Specific handlers currently disabled)...")
+    original_code = lean_code # Store original code for return if no fix applied
 
+    # Basic validation
     if not lean_code or not error_log:
-        logger.debug("No code or error log provided for repair.")
-        return False, original_code
+        logger.debug("Skipping repair: No code or error log provided.")
+        return False, original_code # Cannot repair without input
 
-    # --- Handler 1: Only "no goals to be solved" errors (DISABLED) ---
-    # This handler was disabled because simple local repairs (delete line or
-    # replace with 'done') proved insufficient or unreliable for the underlying
-    # issue where a preceding tactic implicitly solved the goal. Relying on
-    # LLM retry with the original error log is preferred for this case.
-    """
-    if _is_only_no_goals_error(error_log):
-        logger.info("Detected pattern where all Lean source errors are 'no goals to be solved'. Attempting fix...")
-        try:
-            modified_code = _fix_no_goals_error(lean_code, error_log) # Using replace with 'done' version
-            if modified_code != original_code:
-                 logger.info("Applied fix for 'no goals to be solved'.")
-                 if not modified_code.strip():
-                      logger.error("Automated fix resulted in empty code. Reverting.")
-                      return False, original_code
-                 return True, modified_code
-            else:
-                 logger.warning("Identified 'no goals' pattern, but generated code was unchanged by fix function (potentially failed line number extraction?).")
-                 return False, original_code # No effective change made
-        except Exception as e:
-            logger.exception(f"Error during 'no goals' fix execution: {e}", exc_info=True)
-            return False, original_code # Fix failed, return original
-    """
+    # --- Handler 1: Only "no goals to be solved" errors (CURRENTLY DISABLED) ---
+    # This handler remains disabled as the simple fix proved insufficient.
+    # The logic is kept for reference or future reactivation.
+    # ```python
+    # if _is_only_no_goals_error(error_log):
+    #     logger.info("Detected 'no goals to be solved' pattern (Handler Disabled).")
+    #     # FIX DISABLED: return False, original_code
+    #     # Attempt fix if handler were enabled:
+    #     # try:
+    #     #     modified_code = _fix_no_goals_error(lean_code, error_log)
+    #     #     if modified_code != original_code and modified_code.strip():
+    #     #         logger.info("Applied hypothetical fix for 'no goals to be solved'.")
+    #     #         return True, modified_code
+    #     #     else:
+    #     #          logger.warning("Hypothetical 'no goals' fix resulted in no change or empty code.")
+    #     #          return False, original_code
+    #     # except Exception as e:
+    #     #      logger.exception(f"Error during disabled 'no goals' fix execution: {e}")
+    #     #      return False, original_code
+    # ```
+    # --- End Disabled Handler ---
 
-    # --- Add elif blocks here for future error handlers ---
+
+    # --- Placeholder for Future Handlers ---
+    # Add `elif` blocks here to check for other error patterns and call
+    # corresponding `_fix_...` functions when handlers are developed and enabled.
     # Example:
-    # elif _is_some_other_fixable_error(error_log):
-    #    logger.info("Detected other fixable pattern...")
-    #    try:
-    #        modified_code = _fix_other_error(lean_code, error_log)
-    #        if modified_code != original_code:
-    #            logger.info("Applied fix for other error.")
-    #            return True, modified_code
-    #        else:
-    #            return False, original_code
-    #    except Exception as e:
-    #        logger.exception(f"Error during other fix execution: {e}")
-    #        return False, original_code
+    # elif _is_some_other_fixable_pattern(error_log):
+    #     logger.info("Detected other fixable pattern...")
+    #     # ... call fixer function ...
+    #     # return True, modified_code
 
-    # --- Default: No fix applied ---
-    # This is reached if no enabled handlers match the error log.
-    logger.debug("No enabled/matching fixable error pattern detected.")
-    return False, original_code
+
+    # --- Default Case: No Enabled Handler Matched ---
+    # If execution reaches here, it means no enabled handler recognized the error pattern.
+    logger.debug("No enabled/matching fixable error pattern detected in error log.")
+    return False, original_code # Return False and the original code
