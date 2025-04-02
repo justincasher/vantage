@@ -1,5 +1,7 @@
 # Welcome to Vantage
 
+> *The essence of mathematical insight often comes from finding a new vantage point.*
+
 Vantage is a Python project designed to build and manage a mathematical knowledge base (KB). It leverages Lean 4 for formal verification, integrates with Large Language Models (specifically Google's Gemini) for potential code/description generation, and uses an SQLite database for persistent storage.
 
 ***Heads Up!*** *This project is currently under active development and is being built day-by-day. Features, documentation, and the overall structure may change frequently. Your patience and feedback are appreciated!*
