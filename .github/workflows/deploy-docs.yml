@@ -38,6 +38,8 @@ jobs:
           cache: 'pip' # Cache pip dependencies
       - name: Install documentation dependencies
         run: pip install -r docs/requirements.txt # Use the dedicated docs requirements
+      - name: Install project package
+        run: pip install . # Assumes pyproject.toml or setup.py is in the root
       - name: Build MkDocs site
         run: mkdocs build --verbose # Build the site into the 'site' directory
 
