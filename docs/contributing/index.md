@@ -33,7 +33,7 @@ We use GitHub Issues to track bugs, feature requests, documentation updates, and
 
 ## Setting Up Your Development Environment
 
-Please refer to the [**installation**](installation.md) file for detailed instructions on how to clone the repository, install dependencies, and set up your local development environment.
+Please refer to the [**installation**](../getting-started/index.md) file for detailed instructions on how to clone the repository, install dependencies, and set up your local development environment.
 
 ## Coding Style
 

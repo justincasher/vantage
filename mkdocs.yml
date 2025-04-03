@@ -34,10 +34,10 @@ theme:
 # Navigation Structure (Manually defining API Reference)
 nav:
   - 'Welcome': 'index.md'
-  - 'Getting Started': 
-    - 'Installation & Setup': 'installation.md'
-    - 'Configuration': 'configuration.md'
-    - 'Usage': 'usage.md'
+  - 'Getting Started':
+    - 'Installation & Setup': 'getting-started/index.md' #
+    - 'Configuration': 'getting-started/configuration.md'
+    - 'Usage': 'getting-started/usage.md'
   - 'API Reference': 
     - 'Overview': 'reference/index.md' 
     - 'KB Search': 'reference/kb_search.md' 
@@ -48,10 +48,10 @@ nav:
     - 'Lean Proof Repair': 'reference/lean_proof_repair.md'
     - 'LLM Call': 'reference/llm_call.md'
   - 'Contributing':
-    - 'How to Contribute': 'contributing.md'
-    - 'Testing': 'testing.md'
-    - 'Testing': 'coding_style_guidelines.md'
-    - 'Code of Conduct': 'code_of_conduct.md'
+    - 'How to Contribute': 'contributing/index.md'
+    - 'Testing': 'contributing/testing.md'
+    - 'Coding Style': 'contributing/coding_style_guidelines.md'
+    - 'Code of Conduct': 'contributing/code_of_conduct.md'
 
 # Markdown Extensions (Enable extra formatting features)
 markdown_extensions:

@@ -15,7 +15,7 @@ These variables must be set for the application to function correctly.
     * **Example Value:** `gemini-1.5-flash-latest` or `gemini-2.0-flash`
 
 * **`LEAN_AUTOMATOR_SHARED_LIB_PATH`**
-    * **Description:** The path (absolute path recommended) to the directory containing the persistent shared Lean library project (e.g., `vantage_lib`). This *must* match the directory created and configured during the [Installation & Setup](installation.md).
+    * **Description:** The path (absolute path recommended) to the directory containing the persistent shared Lean library project (e.g., `vantage_lib`). This *must* match the directory created and configured during the [Installation & Setup](../getting-started/index.md).
     * **Example Value:** `/path/to/your/project/vantage_lib`
 
 ## Optional Variables
