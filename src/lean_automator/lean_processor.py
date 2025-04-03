@@ -8,12 +8,18 @@ base. It interacts with an LLM client (`GeminiClient`) to generate the code base
 on LaTeX statements, informal proofs, and dependency context.
 
 The core logic involves:
+
 1. Generating a Lean statement signature (`... := sorry`).
+
 2. If the item requires proof, generating Lean proof tactics to replace `sorry`.
+
 3. Calling the `lean_interaction` module to verify the generated code using `lake`
-   in a temporary environment that requires a persistent shared library.
+    in a temporary environment that requires a persistent shared library.
+
 4. Handling retries for LLM generation and potentially invoking proof repair logic.
+
 5. Updating the `KBItem` status and content in the database based on the outcome.
+
 6. Providing batch processing capabilities for items pending Lean processing.
 """
 

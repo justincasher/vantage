@@ -22,8 +22,9 @@ We use GitHub Issues to track bugs, feature requests, documentation updates, and
 5.  **Work on Your Contribution:**
     * Fork the repository to your own GitHub account.
     * Create a new branch for your changes (e.g., `git checkout -b feature/add-new-widget` or `git checkout -b fix/login-bug`).
-    * Make your changes, following any coding style guidelines mentioned (you might want to add a section on this later!).
+    * Make your changes, adhering to the project's coding style and testing requirements (see sections below).
     * Commit your changes with clear commit messages.
+    * Ensure your changes pass all relevant tests before submitting.
 6.  **Submit a Pull Request (PR):**
     * Push your branch to your fork on GitHub.
     * Open a Pull Request back to the main repository (`justincasher/vantage`).
@@ -32,7 +33,15 @@ We use GitHub Issues to track bugs, feature requests, documentation updates, and
 
 ## Setting Up Your Development Environment
 
-Please refer to the [**installation.md**](installation.md) file for detailed instructions on how to clone the repository, install dependencies, and set up your local development environment.
+Please refer to the [**installation**](installation.md) file for detailed instructions on how to clone the repository, install dependencies, and set up your local development environment.
+
+## Coding Style
+
+Please ensure your code adheres to the guidelines outlined in the [**coding style guidelines**](coding_style_guidelines.md) file. This primarily involves following PEP 8 for formatting and Google Style for docstrings. Consistent code style helps maintain readability across the project.
+
+## Testing
+
+Contributions should include relevant tests (unit or integration) where applicable. Before submitting a Pull Request, please ensure all tests pass. For details on the testing strategy and how to run tests, refer to the [**testing**](testing.md) file.
 
 ## Questions or Broader Discussions?
 

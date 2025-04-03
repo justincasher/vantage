@@ -4,10 +4,15 @@
 
 This module handles the validation of Lean code associated with Knowledge Base
 items (`KBItem`). It defines functions to:
+
 - Create temporary Lake environments for isolated verification builds.
+
 - Fetch recursive dependencies based on `plan_dependencies`.
+
 - Execute `lake build` commands asynchronously.
+
 - Update a persistent shared Lean library with successfully verified code.
+
 - Manage database status updates based on validation outcomes.
 
 Configuration relies on environment variables like `LEAN_AUTOMATOR_SHARED_LIB_PATH`
