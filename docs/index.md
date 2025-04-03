@@ -6,16 +6,15 @@ Vantage is a Python project designed to build and manage a mathematical knowledg
 
 ***Heads Up!*** *This project is currently under active development and is being built day-by-day. Features, documentation, and the overall structure may change frequently. Your patience and feedback are appreciated!*
 
-This documentation provides detailed information on setting up, configuring, and using the Lean Automator.
+This documentation provides detailed information on setting up, configuring, using, and contributing to the Vantage project.
 
-## Main Sections
+## Documentation Overview
 
-* **[Installation & Setup](installation.md):** How to get the project running, including dependencies and shared library initialization.
-* **[Configuration](configuration.md):** Details on environment variables and other settings.
-* **[Usage](usage.md):** Examples of how to interact with the knowledge base, LLM, and Lean processor.
-* **[Testing](testing.md):** Information on running the project's test suite.
-* **[Project Structure](project_structure.md):** An overview of the repository layout.
-* **[Contributing](contributing.md):** Guidelines for contributing to the project.
+Navigate through the documentation using the sidebar or start with these main sections:
+
+* **[Getting Started](installation.md):** How to install, configure, and begin using Vantage. This section covers dependencies, setup, and basic usage examples.
+* **[API Reference](reference/index.md):** Detailed information on the project's modules, classes, and functions, generated directly from the source code.
+* **[Contributing](contributing.md):** Guidelines for contributing to the project, including testing procedures, coding style, and the code of conduct.
 
 ## Get Involved!
 
