@@ -11,8 +11,8 @@ edit_uri: 'edit/master/docs/' # Allows direct links to edit pages on GitHub (adj
 # Theme Configuration (using mkdocs-material)
 theme:
   name: material
-  # logo: assets/logo.png # Optional: Add a logo image file to docs/assets/
-  # favicon: assets/favicon.png # Optional: Add a favicon image file to docs/assets/
+  logo: images/favicon.png 
+  favicon: images/favicon.png
   features:
     - navigation.tabs     # Use top-level sections as tabs
     - navigation.sections # Expand sections in the side navigation
@@ -21,14 +21,19 @@ theme:
     - search.highlight    # Highlight search terms on results page
     - content.code.annotate # Allows code annotations
     - content.code.copy   # Copy button for code blocks
+    - header.autohide     # Automatically hide the header
   palette: # Allow light/dark mode toggle
     - scheme: default     # Default light mode
+      primary: deep purple
+      accent: deep blue
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate       # Default dark mode
+      primary: deep purple
+      accent: deep blue
       toggle:
-        icon: material/brightness-4
+        icon: material/brightness-2
         name: Switch to light mode
 
 # Navigation Structure (Manually defining API Reference)
