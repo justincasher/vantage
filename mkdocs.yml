@@ -1,7 +1,6 @@
 # Project Information
 site_name: Vantage Documentation
-# !! Replace with your actual final domain once configured !!
-site_url: https://vantageproject.org 
+site_url: https://vantageproject.org
 site_description: 'Documentation for Vantage: A large, verified mathematical knowledge base in Lean 4'
 
 # Repository
@@ -22,27 +21,36 @@ theme:
     - search.highlight    # Highlight search terms on results page
     - content.code.annotate # Allows code annotations
     - content.code.copy   # Copy button for code blocks
-  palette: # Optional: Allow light/dark mode toggle
+  palette: # Allow light/dark mode toggle
     - scheme: default     # Default light mode
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-    - scheme: slate     # Default dark mode
+    - scheme: slate       # Default dark mode
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
 
-# Navigation Structure (Mirrors your "Main Sections")
-# Map Nav Title to the source markdown file in the 'docs' folder
+# Navigation Structure (Manually defining API Reference)
 nav:
   - 'Welcome': 'index.md'
-  - 'Installation & Setup': 'installation.md'
-  - 'Configuration': 'configuration.md'
-  - 'Usage': 'usage.md'
-  - 'Testing': 'testing.md'
-  - 'Project Structure': 'project_structure.md'
+  - 'Getting Started': 
+    - 'Installation & Setup': 'installation.md'
+    - 'Configuration': 'configuration.md'
+    - 'Usage': 'usage.md'
+  - 'API Reference': 
+    - 'Overview': 'reference/index.md' 
+    - 'KB Search': 'reference/kb_search.md' 
+    - 'KB Storage': 'reference/kb_storage.md'
+    - 'LaTeX Processor': 'reference/latex_processor.md'
+    - 'Lean Interaction': 'reference/lean_interaction.md'
+    - 'Lean Processor': 'reference/lean_processor.md'
+    - 'Lean Proof Repair': 'reference/lean_proof_repair.md'
+    - 'LLM Call': 'reference/llm_call.md'
   - 'Contributing':
     - 'How to Contribute': 'contributing.md'
+    - 'Testing': 'testing.md'
+    - 'Testing': 'coding_style_guidelines.md'
     - 'Code of Conduct': 'code_of_conduct.md'
 
 # Markdown Extensions (Enable extra formatting features)
@@ -58,3 +66,29 @@ markdown_extensions:
       alternate_style: true
   - toc:                 # Table of contents generation
       permalink: true    # Add links to headings
+
+# Plugins Configuration
+plugins:
+  - search # Built-in search plugin
+  - gen-files: # Generates files before build
+      scripts:
+        - scripts/gen_ref_pages.py
+  - mkdocstrings: # Renders docstrings from Python code
+      handlers:
+        python: # Using the Python handler
+          options:
+            # --- Core Parsing Options ---
+            docstring_style: google          # Sets the expected docstring format (e.g., google, numpy, sphinx).
+
+            # --- Member Rendering Control ---
+            members_order: source            # Order members (functions, classes) as they appear in the source code file.
+            show_docstring_functions: true   # Render the full docstring body for functions and methods.
+            show_docstring_classes: true     # Render the full docstring body for classes.
+            # Note: Options like show_docstring_parameters, _raises, _attributes, _description, etc., default to true.
+
+            # --- Presentation and Organization ---
+            show_root_heading: true          # Add a top-level heading for the object being documented (e.g., the module name).
+            show_category_heading: true      # Add category headings like "Functions", "Classes" when listing members.
+            group_by_category: true          # Group listed members by their category (functions together, classes together).
+            show_bases: true                 # For classes, show the base classes they inherit from.
+            show_signature_annotations: true # Include type hints (annotations) in the rendered function/method signatures.

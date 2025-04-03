@@ -1,5 +1,12 @@
 # File: kb_search.py
 
+"""Generates embeddings and performs semantic search in the Knowledge Base.
+
+This module provides functions for generating text embeddings using a Gemini client
+and performing semantic search within the Knowledge Base by comparing vector
+similarity (cosine similarity) between a query embedding and stored embeddings.
+"""
+
 import asyncio
 import numpy as np
 import os
@@ -22,12 +29,6 @@ except ImportError:
      DEFAULT_DB_PATH = 'knowledge_base.sqlite'
      EMBEDDING_DTYPE = np.float32
 
-
-"""
-Provides functions for generating embeddings and performing semantic search
-within the Knowledge Base using vector similarity.
-"""
-
 # --- Embedding Generation ---
 
 async def generate_embedding(
@@ -35,16 +36,20 @@ async def generate_embedding(
     task_type: str,
     client: GeminiClient
 ) -> Optional[np.ndarray]:
-    """
-    Generates an embedding for the given text using the configured Gemini client.
+    """Generates an embedding for the given text.
+
+    Uses the configured Gemini client to create a vector representation of the
+    input text suitable for the specified task type.
 
     Args:
-        text: The text content to embed.
-        task_type: The task type for the embedding (e.g., "RETRIEVAL_DOCUMENT").
-        client: An initialized GeminiClient instance.
+        text (str): The text content to embed.
+        task_type (str): The task type for the embedding (e.g.,
+            "RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY").
+        client (GeminiClient): An initialized GeminiClient instance.
 
     Returns:
-        A numpy array representing the embedding, or None if generation fails.
+        Optional[np.ndarray]: A numpy array representing the embedding vector,
+        or None if generation fails or the client is unavailable.
     """
     if not client:
         warnings.warn("GeminiClient not available for embedding generation.")
@@ -69,7 +74,15 @@ async def generate_embedding(
 # --- Vector Utilities ---
 
 def _bytes_to_vector(data: bytes) -> Optional[np.ndarray]:
-    """Converts raw bytes back to a numpy float vector."""
+    """Converts raw bytes back to a numpy float vector.
+
+    Args:
+        data (bytes): The raw byte string representing the embedding data.
+
+    Returns:
+        Optional[np.ndarray]: The numpy array representation of the vector using
+        the defined EMBEDDING_DTYPE, or None if decoding fails.
+    """
     try:
         # Assumes the bytes represent a flat array of EMBEDDING_DTYPE
         vector = np.frombuffer(data, dtype=EMBEDDING_DTYPE)
@@ -84,7 +97,17 @@ def _bytes_to_vector(data: bytes) -> Optional[np.ndarray]:
         return None
 
 def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
-    """Calculates cosine similarity between two numpy vectors."""
+    """Calculates the cosine similarity between two numpy vectors.
+
+    Args:
+        v1 (np.ndarray): The first vector.
+        v2 (np.ndarray): The second vector.
+
+    Returns:
+        float: The cosine similarity score between -1.0 and 1.0. Returns 0.0
+        if either vector has zero magnitude. Returns -1.0 if vectors have
+        different shapes.
+    """
     if v1.shape != v2.shape:
         warnings.warn(f"Cannot compute cosine similarity for vectors with different shapes: {v1.shape} vs {v2.shape}")
         return -1.0 # Indicate error/invalid comparison
@@ -116,23 +139,34 @@ async def find_similar_items(
     db_path: Optional[str] = None,
     top_n: int = 5
 ) -> List[Tuple[KBItem, float]]:
-    """
-    Finds KBItems with embeddings similar to the query text.
+    """Finds KBItems with embeddings similar to the query text.
 
-    Performs a brute-force cosine similarity search across all items
-    having an embedding for the specified field.
+    Generates an embedding for the query text and performs a brute-force
+    cosine similarity search across all items in the database that have a
+    pre-computed embedding for the specified field ('nl' or 'latex').
 
     Args:
-        query_text: The natural language query.
-        search_field: Which embedding to search ('nl' or 'latex').
-        client: An initialized GeminiClient instance.
-        task_type_query: The task type for embedding the query (default: RETRIEVAL_QUERY).
-        db_path: Optional path to the database file.
-        top_n: The maximum number of similar items to return.
+        query_text (str): The natural language query.
+        search_field (str): Which embedding field to search against ('nl' or
+            'latex').
+        client (GeminiClient): An initialized GeminiClient instance used for
+            generating the query embedding.
+        task_type_query (str, optional): The task type for embedding the query.
+            Defaults to "RETRIEVAL_QUERY".
+        db_path (Optional[str], optional): Path to the database file. If None,
+            uses DEFAULT_DB_PATH. Defaults to None.
+        top_n (int, optional): The maximum number of similar items to return.
+            Defaults to 5.
 
     Returns:
-        A list of tuples, each containing a matching KBItem and its similarity
-        score, sorted by score descending. Returns empty list on error or no matches.
+        List[Tuple[KBItem, float]]: A list of tuples, each containing a
+        matching KBItem object and its similarity score (float between -1 and 1).
+        The list is sorted by similarity score in descending order. Returns an
+        empty list if the client is unavailable, embedding generation fails,
+        database access fails, no items have embeddings, or no matches are found.
+
+    Raises:
+        ValueError: If `search_field` is not 'nl' or 'latex'.
     """
     if search_field not in ['nl', 'latex']:
         raise ValueError("search_field must be 'nl' or 'latex'")

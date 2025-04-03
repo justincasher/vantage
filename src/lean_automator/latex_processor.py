@@ -1,5 +1,17 @@
 # File: latex_processor.py
 
+"""Handles LaTeX generation and review for Knowledge Base items using an LLM.
+
+This module orchestrates the process of generating LaTeX representations (both
+statement and optional informal proof) for mathematical items stored in the
+Knowledge Base (`KBItem`). It uses a provided LLM client (`GeminiClient`)
+to generate and subsequently review the LaTeX content based on predefined prompts
+and the item's context (description, dependencies). The process involves iterative
+refinement cycles until the LaTeX is accepted by the LLM reviewer or a maximum
+number of cycles is reached. It updates the status and content of the KBItem
+in the database accordingly.
+"""
+
 import asyncio
 import warnings
 import logging
@@ -16,13 +28,14 @@ try:
         ItemType, # Import ItemType
         get_kb_item_by_name,
         save_kb_item,
-        DEFAULT_DB_PATH
+        DEFAULT_DB_PATH,
+        get_items_by_status # Added for batch processing
     )
     # Need LLM client
     from lean_automator.llm_call import GeminiClient
 except ImportError:
     warnings.warn("latex_processor: Required modules (kb_storage, llm_call) not found.")
-    KBItem = None; ItemStatus = None; ItemType = None; get_kb_item_by_name = None; save_kb_item = None; GeminiClient = None; DEFAULT_DB_PATH = None
+    KBItem = None; ItemStatus = None; ItemType = None; get_kb_item_by_name = None; save_kb_item = None; GeminiClient = None; DEFAULT_DB_PATH = None; get_items_by_status = None # type: ignore
 
 # --- Logging ---
 logger = logging.getLogger(__name__)
@@ -135,10 +148,24 @@ Overall Judgment: [Accepted OR Rejected] (Must be Accepted ONLY if both applicab
 # --- Helper Functions ---
 
 def _parse_combined_latex(text: Optional[str], item_type: ItemType) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Extracts LaTeX statement and proof from the combined generator output.
-    Returns (statement, proof) or (None, None) on failure.
-    Proof is None if not expected or not found.
+    """Extracts LaTeX statement and proof from combined generator output. (Internal Helper)
+
+    Parses text expected to contain '--- BEGIN LATEX --- ... --- END LATEX ---' blocks,
+    extracting the statement following the item type marker and the proof following
+    the 'PROOF' marker (if the item type requires a proof).
+
+    Args:
+        text (Optional[str]): The raw text output from the LaTeX generator LLM.
+        item_type (ItemType): The expected type of the item, used to locate the
+            start of the statement and determine if a proof is expected.
+
+    Returns:
+        Tuple[Optional[str], Optional[str]]: A tuple containing:
+            - The extracted LaTeX statement string, or None if parsing fails.
+            - The extracted LaTeX proof string if the item type requires proof and
+              it was found, otherwise None.
+        Returns (None, None) if the main block markers are not found or the
+        statement cannot be parsed.
     """
     if not text:
         return None, None
@@ -152,7 +179,9 @@ def _parse_combined_latex(text: Optional[str], item_type: ItemType) -> Tuple[Opt
     item_type_str = item_type.name # Get the expected type marker (e.g., "THEOREM")
 
     # Find the statement part after the type marker
-    statement_match = re.search(rf"^\s*{item_type_str}\s*\n(.*?)(?:^\s*PROOF\s*\n|\Z)", content, re.DOTALL | re.MULTILINE | re.IGNORECASE)
+    # Match from start of content, looking for type marker, newline, then capture group
+    # Stop capture group before optional PROOF marker or end of string (\Z)
+    statement_match = re.search(rf"^\s*{re.escape(item_type_str)}\s*\n(.*?)(?:^\s*PROOF\s*\n|\Z)", content, re.DOTALL | re.MULTILINE | re.IGNORECASE)
     if not statement_match:
         logger.warning(f"Could not find item type marker '{item_type_str}' or statement content.")
         return None, None
@@ -161,36 +190,51 @@ def _parse_combined_latex(text: Optional[str], item_type: ItemType) -> Tuple[Opt
     proof = None
 
     if item_type.requires_proof():
-        # Find the proof part after the PROOF marker
+        # Find the proof part after the PROOF marker, starting search from beginning of content block
         proof_match = re.search(r"^\s*PROOF\s*\n(.*)", content, re.DOTALL | re.MULTILINE | re.IGNORECASE)
         if proof_match:
             proof = proof_match.group(1).strip()
         else:
             logger.warning(f"Expected PROOF marker/content for item type {item_type_str}, but not found.")
-            # Return statement but no proof? Or fail parsing? Let's return statement for now.
+            # Proceed with the successfully parsed statement, proof remains None
             pass
 
     return statement, proof
 
 
 def _parse_combined_review(text: Optional[str], proof_expected: bool) -> Tuple[str, str, Optional[str]]:
-    """
-    Parses the combined reviewer response.
-    Returns: (overall_judgment: str, combined_feedback: str, error_location: Optional[str])
-    error_location might be "Statement", "Proof", or None if accepted/unclear.
+    """Parses the structured response from the LaTeX reviewer LLM. (Internal Helper)
+
+    Extracts the overall judgment ("Accepted" or "Rejected"), combines feedback
+    from statement and proof sections (if rejected), and identifies the primary
+    location of the rejection ("Statement", "Proof", "Both", or None if accepted).
+
+    Args:
+        text (Optional[str]): The raw text output from the LaTeX reviewer LLM.
+        proof_expected (bool): Whether a proof was expected for this item type,
+            used to interpret the Proof Judgment field.
+
+    Returns:
+        Tuple[str, str, Optional[str]]: A tuple containing:
+            - overall_judgment (str): "Accepted" or "Rejected".
+            - combined_feedback (str): Consolidated feedback string if rejected,
+              or "OK" if accepted.
+            - error_location (Optional[str]): "Statement", "Proof", "Both" if
+              rejected, None if accepted or location unclear. Defaults to "Rejected"
+              with generic feedback if parsing fails completely.
     """
     if not text:
         return "Rejected", "Reviewer response was empty.", "Unknown"
 
-    # Defaults
+    # Defaults in case parsing fails
     overall_judgment = "Rejected"
     stmt_judgment = "Rejected"
-    proof_judgment = "Rejected" if proof_expected else "NA"
+    proof_judgment = "Rejected" if proof_expected else "NA" # Match review prompt options
     stmt_feedback = ""
     proof_feedback = ""
-    error_location = None
+    error_location = None # None means accepted or unclear rejection location
 
-    # Extract judgments
+    # Extract judgments using regex, case-insensitive
     oj_match = re.search(r"Overall Judgment:\s*(Accepted|Rejected)", text, re.IGNORECASE)
     if oj_match:
         overall_judgment = "Accepted" if oj_match.group(1).strip().lower() == "accepted" else "Rejected"
@@ -202,10 +246,14 @@ def _parse_combined_review(text: Optional[str], proof_expected: bool) -> Tuple[s
     pj_match = re.search(r"Proof Judgment:\s*(Accepted|Rejected|NA)", text, re.IGNORECASE)
     if pj_match:
         proof_judgment_str = pj_match.group(1).strip().upper()
+        # Validate against expected values
         if proof_judgment_str in ["ACCEPTED", "REJECTED", "NA"]:
              proof_judgment = proof_judgment_str
+        else: # If unexpected value, treat as rejected if proof was expected
+            proof_judgment = "Rejected" if proof_expected else "NA"
+            logger.warning(f"Unexpected Proof Judgment value '{proof_judgment_str}', treating as {proof_judgment}.")
 
-    # Extract feedback sections (capture everything after the tag)
+    # Extract feedback sections robustly (capture everything until next known section or end)
     sf_match = re.search(r"Statement Feedback:\s*(.*?)(?:Proof Judgment:|Proof Feedback:|Overall Judgment:|$)", text, re.DOTALL | re.IGNORECASE)
     if sf_match:
         stmt_feedback = sf_match.group(1).strip()
@@ -214,94 +262,152 @@ def _parse_combined_review(text: Optional[str], proof_expected: bool) -> Tuple[s
     if pf_match:
         proof_feedback = pf_match.group(1).strip()
 
-    # Determine combined feedback and error location
+    # Determine combined feedback and primary error location if rejected
     combined_feedback_parts = []
     if stmt_judgment != "Accepted" and stmt_feedback and stmt_feedback.lower() != 'ok':
         combined_feedback_parts.append(f"Statement Feedback: {stmt_feedback}")
-        error_location = "Statement"
-    if proof_judgment == "Rejected" and proof_feedback and proof_feedback.lower() != 'ok':
+        error_location = "Statement" # Statement rejected
+
+    # Check proof only if it was expected and judged
+    if proof_expected and proof_judgment == "Rejected" and proof_feedback and proof_feedback.lower() != 'ok':
         combined_feedback_parts.append(f"Proof Feedback: {proof_feedback}")
-        # If statement also failed, keep error_location as Statement? Or set to Both? Let's prioritize statement error.
-        if error_location is None:
-            error_location = "Proof"
-        elif error_location == "Statement":
-             error_location = "Both"
+        # Determine combined error location
+        if error_location == "Statement":
+            error_location = "Both" # Both rejected
+        else:
+            error_location = "Proof" # Only proof rejected
 
 
-    combined_feedback = "\n".join(combined_feedback_parts) if combined_feedback_parts else "No specific feedback provided."
+    combined_feedback = "\n".join(combined_feedback_parts).strip()
+    # Provide default feedback if rejected but no specific feedback captured
+    if overall_judgment == "Rejected" and not combined_feedback:
+        combined_feedback = "Rejected by reviewer, but specific feedback could not be parsed."
+        if error_location is None: # Try to assign general location if possible
+             if stmt_judgment == "Rejected": error_location = "Statement"
+             elif proof_judgment == "Rejected": error_location = "Proof"
+             else: error_location = "Unknown"
 
-    # Sanity check: Overall judgment should be Rejected if any part is Rejected
-    if overall_judgment == "Accepted" and (stmt_judgment == "Rejected" or proof_judgment == "Rejected"):
-         logger.warning(f"Reviewer inconsistencies: Overall judgment is Accepted but Statement is {stmt_judgment} and Proof is {proof_judgment}. Overriding Overall to Rejected.")
+    # Sanity Checks / Overrides based on component judgments
+    # If Overall says Accepted but a component is Rejected -> Force Reject
+    if overall_judgment == "Accepted" and (stmt_judgment == "Rejected" or (proof_expected and proof_judgment == "Rejected")):
+         logger.warning(f"Reviewer inconsistency: Overall Judgment 'Accepted' but Statement='{stmt_judgment}', Proof='{proof_judgment}'. Forcing Overall Judgment to 'Rejected'.")
          overall_judgment = "Rejected"
-    # Sanity check: Overall must be Accepted if both parts are Accepted (or NA for proof)
-    elif overall_judgment == "Rejected" and stmt_judgment == "Accepted" and proof_judgment in ["Accepted", "NA"]:
-         logger.warning(f"Reviewer inconsistencies: Overall judgment is Rejected but Statement is Accepted and Proof is {proof_judgment}. Keeping Overall as Rejected based on text.")
-         # Keep overall_judgment as Rejected, maybe feedback explains why
+         if not combined_feedback or combined_feedback == "OK": # Ensure feedback exists if forced reject
+              combined_feedback = "Rejected due to component judgment inconsistency (Statement or Proof rejected)."
+              # Update error location if needed
+              if error_location is None:
+                  if stmt_judgment == "Rejected": error_location = "Statement"
+                  if proof_judgment == "Rejected": error_location = "Proof" if error_location is None else "Both"
 
+
+    # If overall judgment is finally accepted, simplify feedback
     if overall_judgment == "Accepted":
-        combined_feedback = "OK" # Simplify feedback if accepted
+        combined_feedback = "OK"
+        error_location = None
 
     return overall_judgment, combined_feedback, error_location
 
 
 def _build_dependency_context_string(dependencies: List[KBItem]) -> str:
-    """Builds the context string for dependencies using statement LaTeX."""
+    """Builds a formatted string of dependency statements for LLM context. (Internal Helper)
+
+    Filters dependencies to include only those with an accepted LaTeX statement
+    (status indicates PROVEN, LATEX_ACCEPTED, etc.) and formats them as a list
+    with their unique name, type, and LaTeX statement.
+
+    Args:
+        dependencies (List[KBItem]): A list of KBItem objects representing the
+            dependencies of the item being processed.
+
+    Returns:
+        str: A formatted string containing the context of valid dependencies,
+        or a default message if no valid dependencies are found.
+    """
     dependency_context = ""
-    # Dependencies should have LATEX_ACCEPTED status
-    valid_deps = [d for d in dependencies if d and d.latex_statement and d.status in {ItemStatus.PROVEN, ItemStatus.AXIOM_ACCEPTED, ItemStatus.DEFINITION_ADDED, ItemStatus.LATEX_ACCEPTED}]
+    # Define statuses indicating acceptable LaTeX statement for context
+    already_accepted_statuses = {ItemStatus.LATEX_ACCEPTED, ItemStatus.PROVEN, ItemStatus.DEFINITION_ADDED, ItemStatus.AXIOM_ACCEPTED}
+    # Filter dependencies: must exist, have a statement, and have an accepted status
+    valid_deps = [d for d in dependencies if d and d.latex_statement and d.status in already_accepted_statuses]
+
     if valid_deps:
         for dep in valid_deps:
-            # Use --- BEGIN/END STATEMENT --- marker for clarity? Or just the latex? Let's just use latex.
-            dependency_context += f"- {dep.unique_name} ({dep.item_type.name}):\n  ```latex\n  {dep.latex_statement}\n  ```\n" # Using ```latex for context is ok for LLM
+            # Format each dependency clearly for the LLM
+            dependency_context += f"- {dep.unique_name} ({dep.item_type.name}):\n  ```latex\n  {dep.latex_statement}\n  ```\n"
     else:
-        dependency_context = "(None explicitly provided from KB)\n"
+        dependency_context = "(None explicitly provided from KB or dependencies lack accepted LaTeX statements)\n"
     return dependency_context
 
 
 async def _call_latex_statement_and_proof_generator(
-    item: KBItem, # Pass the whole item
+    item: KBItem,
     dependencies: List[KBItem],
-    current_statement: Optional[str], # For refinement
-    current_proof: Optional[str],     # For refinement
-    review_feedback: Optional[str],   # For refinement
+    current_statement: Optional[str],
+    current_proof: Optional[str],
+    review_feedback: Optional[str],
     client: GeminiClient
 ) -> Optional[str]:
-    """Calls the LLM to generate combined LaTeX statement and proof (if needed). Returns raw response."""
+    """Calls the LLM to generate/refine LaTeX statement and proof. (Internal Helper)
+
+    Formats the prompt using `COMBINED_GENERATOR_PROMPT_TEMPLATE`, including
+    item details, dependency context, and potentially refinement instructions based
+    on previous attempts (current statement/proof and feedback).
+
+    Args:
+        item (KBItem): The KBItem being processed.
+        dependencies (List[KBItem]): List of dependency KBItems for context.
+        current_statement (Optional[str]): The LaTeX statement from the previous
+            cycle, used for refinement context. None for the first attempt.
+        current_proof (Optional[str]): The LaTeX proof from the previous cycle,
+            used for refinement context (if applicable). None for the first attempt.
+        review_feedback (Optional[str]): Feedback from the previous review cycle,
+            used for refinement context. None for the first attempt.
+        client (GeminiClient): The initialized LLM client instance.
+
+    Returns:
+        Optional[str]: The raw text response from the LLM generator, or None if
+        the client is unavailable, prompt formatting fails, or the API call errors.
+
+    Raises:
+        ValueError: If the GeminiClient is not available.
+    """
     if not client:
         logger.error("_call_latex_generator: GeminiClient is not available.")
         raise ValueError("GeminiClient is not available.")
 
     dependency_context_str = _build_dependency_context_string(dependencies)
     item_type_name = item.item_type.name
-    item_type_marker = item_type_name.upper() # E.g., THEOREM
+    item_type_marker = item_type_name.upper()
     proof_expected = item.item_type.requires_proof()
 
-    # Format refinement context based on what's available
+    # Format context about the previous proof attempt for refinement prompt
     proof_context_for_refinement = ""
-    if proof_expected and current_proof:
-        proof_context_for_refinement = f"The previous proof attempt was:\n--- BEGIN PROOF ---\n{current_proof}\n--- END PROOF ---"
-    elif proof_expected and not current_proof:
-         proof_context_for_refinement = "(No previous proof attempt available)"
-    # else: proof not expected, leave empty
+    if proof_expected:
+        if current_proof:
+            proof_context_for_refinement = f"The previous proof attempt was:\n--- BEGIN PROOF ---\n{current_proof}\n--- END PROOF ---"
+        else:
+            # Indicate if proof expected but none available from previous attempt
+            proof_context_for_refinement = "(No previous proof attempt available or applicable)"
 
     try:
-        # Handle conditional formatting for refinement section
+        # Choose base prompt and format, removing refinement section if first attempt
         base_prompt = COMBINED_GENERATOR_PROMPT_TEMPLATE
-        if not (current_statement and review_feedback):
-            # Remove the refinement section if it's the first attempt
-            base_prompt = re.sub(r"\*\*Refinement \(If Applicable\):\*\*(.*?)\*\*Instructions:\*\*", "**Instructions:**", base_prompt, flags=re.DOTALL)
+        is_first_attempt = not (current_statement and review_feedback)
+
+        if is_first_attempt:
+            # Remove the whole refinement section using regex for robustness
+            base_prompt = re.sub(r"\*\*Refinement \(If Applicable\):\*\*.*?\*\*Instructions:\*\*", "**Instructions:**", base_prompt, flags=re.DOTALL)
+            # Format without refinement placeholders
             prompt = base_prompt.format(
                 unique_name=item.unique_name,
                 item_type_name=item_type_name,
                 nl_description=item.description_nl or "(No description provided)",
                 dependency_context=dependency_context_str,
-                item_type_marker=item_type_marker, # For instructions example
-                proof_marker_and_content="" # Placeholder, handled by LLM logic
+                item_type_marker=item_type_marker, # For example in instructions
+                proof_marker_and_content="{proof_marker_and_content}" # Placeholder still needed
             )
         else:
-            # Include refinement section
-             prompt = base_prompt.format(
+            # Format with refinement placeholders
+            prompt = base_prompt.format(
                 unique_name=item.unique_name,
                 item_type_name=item_type_name,
                 nl_description=item.description_nl or "(No description provided)",
@@ -309,25 +415,27 @@ async def _call_latex_statement_and_proof_generator(
                 current_statement=current_statement or "(Not available)",
                 proof_context_for_refinement=proof_context_for_refinement,
                 review_feedback=review_feedback or "(Not available)",
-                item_type_marker=item_type_marker, # For instructions example
-                proof_marker_and_content="" # Placeholder, handled by LLM logic
+                item_type_marker=item_type_marker, # For example in instructions
+                proof_marker_and_content="{proof_marker_and_content}" # Placeholder still needed
             )
 
-        # Add final instruction about proof based on type
+        # Replace the final placeholder based on whether proof is expected
         if proof_expected:
              prompt = prompt.replace("{proof_marker_and_content}", "PROOF\n[LaTeX code for the proof...]")
         else:
-             prompt = prompt.replace("{proof_marker_and_content}", "") # Remove placeholder entirely
+             prompt = prompt.replace("{proof_marker_and_content}", "") # Remove entirely
 
     except KeyError as e:
-        logger.error(f"Missing key in COMBINED_GENERATOR_PROMPT_TEMPLATE formatting: {e}")
+        logger.error(f"Missing key in COMBINED_GENERATOR_PROMPT_TEMPLATE formatting: {e}. Prompt state: {prompt[:500] if 'prompt' in locals() else 'N/A'}")
         return None
 
     try:
-        logger.debug(f"Sending combined LaTeX generation prompt for {item.unique_name}")
+        logger.debug(f"Sending combined LaTeX generation prompt for {item.unique_name} (Cycle context: {'Refinement' if not is_first_attempt else 'First attempt'})")
+        # Assuming client.generate handles the API call and returns text
         response_text = await client.generate(prompt=prompt)
-        return response_text # Return raw text for external parsing
+        return response_text
     except Exception as e:
+        # Catch exceptions during the API call itself
         logger.error(f"Error calling combined LaTeX generator LLM for {item.unique_name}: {e}")
         return None
 
@@ -335,13 +443,35 @@ async def _call_latex_statement_and_proof_generator(
 async def _call_latex_statement_and_proof_reviewer(
     item_type: ItemType,
     latex_statement: str,
-    latex_proof: Optional[str], # Only if proof_expected
+    latex_proof: Optional[str],
     unique_name: str,
     nl_description: Optional[str],
     dependencies: List[KBItem],
     client: GeminiClient
-) -> Optional[str]: # Return raw response text
-    """Calls the LLM to review combined LaTeX statement and proof. Returns raw response."""
+) -> Optional[str]:
+    """Calls the LLM to review the generated LaTeX statement and proof. (Internal Helper)
+
+    Formats the prompt using `COMBINED_REVIEWER_PROMPT_TEMPLATE`, providing the
+    generated LaTeX, item details, and dependency context for the LLM reviewer.
+
+    Args:
+        item_type (ItemType): The type of the KBItem being reviewed.
+        latex_statement (str): The generated LaTeX statement to be reviewed.
+        latex_proof (Optional[str]): The generated LaTeX proof to be reviewed.
+            Should be None if the `item_type` does not require a proof.
+        unique_name (str): The unique name of the KBItem.
+        nl_description (Optional[str]): The natural language description for context.
+        dependencies (List[KBItem]): List of dependency KBItems for context.
+        client (GeminiClient): The initialized LLM client instance.
+
+    Returns:
+        Optional[str]: The raw text response from the LLM reviewer, or None if
+        the client is unavailable, prompt formatting fails, the API call errors,
+        or if a proof was expected but not provided.
+
+    Raises:
+        ValueError: If the GeminiClient is not available.
+    """
     if not client:
         logger.error("_call_latex_reviewer: GeminiClient is not available.")
         raise ValueError("GeminiClient is not available.")
@@ -351,16 +481,19 @@ async def _call_latex_statement_and_proof_reviewer(
     item_type_marker = item_type_name.upper()
     proof_expected = item_type.requires_proof()
 
+    # Format the proof part for the review prompt
     proof_marker_and_content_to_review = ""
-    if proof_expected and latex_proof:
-        proof_marker_and_content_to_review = f"\n\nPROOF\n{latex_proof}"
-    elif proof_expected and not latex_proof:
-        # This case indicates an error - generator failed to provide expected proof
-        logger.error(f"Reviewer called for provable type {item_type_name} but no proof provided.")
-        return None # Cannot review
-    # else: proof not expected, leave empty
+    if proof_expected:
+        if latex_proof:
+            # Include PROOF marker and content if expected and provided
+            proof_marker_and_content_to_review = f"\n\nPROOF\n{latex_proof}"
+        else:
+            # Error condition: proof expected based on type, but not provided
+            logger.error(f"Reviewer called for provable type {item_type_name} ('{unique_name}') but no proof content was provided to review.")
+            return None # Cannot proceed with review if expected proof is missing
 
     try:
+        # Format the base review prompt
         prompt = COMBINED_REVIEWER_PROMPT_TEMPLATE.format(
             unique_name=unique_name,
             item_type_name=item_type_name,
@@ -370,20 +503,22 @@ async def _call_latex_statement_and_proof_reviewer(
             proof_marker_and_content_to_review=proof_marker_and_content_to_review,
             dependency_context=dependency_context_str
         )
-        # Adjust prompt if proof not expected - remove proof review tasks?
+        # If proof is not expected, remove the proof review tasks section
         if not proof_expected:
-             prompt = re.sub(r"\*\*Review Tasks for PROOF \(If present\):\*\*(.*?)\*\*Output Format:\*\*", "**Output Format:**", prompt, flags=re.DOTALL)
-             # Also adjust output format instruction if needed, tell it to output NA for proof parts
+             prompt = re.sub(r"\*\*Review Tasks for PROOF \(If present\):\*\*.*?\*\*Output Format:\*\*", "**Output Format:**", prompt, flags=re.DOTALL)
+             # Optionally, could add instruction to output NA for proof judgment/feedback
 
     except KeyError as e:
-        logger.error(f"Missing key in COMBINED_REVIEWER_PROMPT_TEMPLATE formatting: {e}")
+        logger.error(f"Missing key in COMBINED_REVIEWER_PROMPT_TEMPLATE formatting: {e}. Prompt state: {prompt[:500] if 'prompt' in locals() else 'N/A'}")
         return None
 
     try:
         logger.debug(f"Sending combined LaTeX review prompt for {unique_name}")
+        # Assuming client.generate handles the API call and returns text
         response_text = await client.generate(prompt=prompt)
-        return response_text # Return raw text for external parsing
+        return response_text
     except Exception as e:
+        # Catch exceptions during the API call itself
         logger.error(f"Error calling combined LaTeX reviewer LLM for {unique_name}: {e}")
         return None
 
@@ -395,18 +530,43 @@ async def generate_and_review_latex(
     client: GeminiClient,
     db_path: Optional[str] = None
 ) -> bool:
-    """
-    Manages the combined process of generating, reviewing, and refining LaTeX statement
-    and proof (if applicable) for a given KBItem. Updates the item in the database.
+    """Generates, reviews, and refines LaTeX for a KBItem iteratively.
+
+    This function orchestrates the main workflow for obtaining accepted LaTeX
+    for a given `KBItem` identified by its `unique_name`.
+    1. Fetches the item and its dependencies from the database.
+    2. Checks if the item's current status requires LaTeX processing.
+    3. Enters a loop (up to `MAX_REVIEW_CYCLES`):
+        a. Calls the LLM generator (`_call_latex_statement_and_proof_generator`)
+           to produce/refine the LaTeX statement and proof (if applicable),
+           providing previous feedback if it's not the first cycle.
+        b. Parses the generator's output using `_parse_combined_latex`.
+        c. Calls the LLM reviewer (`_call_latex_statement_and_proof_reviewer`)
+           to evaluate the generated LaTeX.
+        d. Parses the reviewer's judgment and feedback using `_parse_combined_review`.
+        e. If accepted, updates the KBItem with the accepted LaTeX, sets status to
+           `LATEX_ACCEPTED`, saves it (triggering embedding generation), and returns True.
+        f. If rejected, stores the feedback, updates status, saves, and continues the loop.
+    4. If the loop finishes without acceptance, sets status to `LATEX_REJECTED_FINAL`
+       and returns False.
+    Handles errors during the process, updating the item status to `ERROR`.
+
+    Args:
+        unique_name (str): The unique name of the KBItem to process.
+        client (GeminiClient): An initialized LLM client instance.
+        db_path (Optional[str]): Path to the database file. If None, uses
+            `DEFAULT_DB_PATH`.
 
     Returns:
-        bool: True if LaTeX was successfully generated and accepted, False otherwise.
+        bool: True if LaTeX was successfully generated and accepted within the
+        allowed review cycles, False otherwise (including errors or final rejection).
     """
+    # Check if necessary storage functions are available
     if not all([KBItem, ItemStatus, ItemType, get_kb_item_by_name, save_kb_item]):
         logger.critical("KB Storage module components not loaded correctly. Cannot process LaTeX.")
         return False
     if not client:
-        logger.error("GeminiClient not provided. Cannot process LaTeX.")
+        logger.error(f"GeminiClient not provided for LaTeX processing of {unique_name}.")
         return False
 
     effective_db_path = db_path or DEFAULT_DB_PATH
@@ -416,8 +576,9 @@ async def generate_and_review_latex(
         logger.error(f"LaTeX Processing: Item not found: {unique_name}")
         return False
 
+    # --- Status Checks ---
     # Define statuses that trigger processing
-    trigger_statuses = {ItemStatus.PENDING, ItemStatus.PENDING_LATEX, ItemStatus.LATEX_REJECTED_FINAL}
+    trigger_statuses = {ItemStatus.PENDING, ItemStatus.PENDING_LATEX, ItemStatus.LATEX_REJECTED_FINAL, ItemStatus.PENDING_LATEX_REVIEW} # Added review status
     # Define statuses that mean LaTeX is already acceptable
     already_accepted_statuses = {ItemStatus.LATEX_ACCEPTED, ItemStatus.PROVEN, ItemStatus.DEFINITION_ADDED, ItemStatus.AXIOM_ACCEPTED}
 
@@ -425,44 +586,53 @@ async def generate_and_review_latex(
         logger.info(f"LaTeX Processing: Item {unique_name} status ({item.status.name}) indicates LaTeX is already acceptable. Skipping.")
         return True
 
+    # Ensure item is in a state where LaTeX generation should start/resume
     if item.status not in trigger_statuses:
         logger.warning(f"LaTeX Processing: Item {unique_name} not in a trigger status ({ {s.name for s in trigger_statuses} }). Current: {item.status.name}. Skipping.")
         return False
 
     original_status = item.status
+    logger.info(f"Starting combined LaTeX processing for {unique_name} (Status: {original_status.name})")
 
     # --- Fetch Dependencies ---
     dependency_items: List[KBItem] = []
     logger.debug(f"Fetching dependencies for {unique_name}: {item.plan_dependencies}")
-    for dep_name in item.plan_dependencies:
-        dep_item = get_kb_item_by_name(dep_name, effective_db_path)
-        if dep_item:
-            # Need dependency's statement to be accepted
-            if dep_item.latex_statement and dep_item.status in already_accepted_statuses:
-                 dependency_items.append(dep_item)
+    if item.plan_dependencies:
+        for dep_name in item.plan_dependencies:
+            dep_item = get_kb_item_by_name(dep_name, effective_db_path)
+            if dep_item:
+                # Check if dependency has acceptable LaTeX statement
+                if dep_item.latex_statement and dep_item.status in already_accepted_statuses:
+                     dependency_items.append(dep_item)
+                     logger.debug(f"  - Including valid dependency: {dep_name} ({dep_item.status.name})")
+                else:
+                     logger.warning(f"  - Dependency '{dep_name}' for '{unique_name}' excluded: Lacks accepted LaTeX statement (Status: {dep_item.status.name if dep_item.status else 'N/A'}).")
             else:
-                 logger.warning(f"Dependency '{dep_name}' for '{unique_name}' does not have accepted LaTeX statement (status: {dep_item.status.name}). Excluding from context.")
-        else:
-            logger.error(f"Dependency '{dep_name}' not found in KB for target '{unique_name}' during LaTeX processing.")
+                logger.error(f"  - Dependency '{dep_name}' not found in KB for target '{unique_name}'.")
+    else:
+         logger.debug(f"No plan dependencies listed for {unique_name}.")
 
 
-    # --- Start Processing ---
+    # --- Start Processing Cycle ---
     try:
+        # Initial status update to indicate processing has started
         item.update_status(ItemStatus.LATEX_GENERATION_IN_PROGRESS)
-        await save_kb_item(item, client=None, db_path=effective_db_path)
+        await save_kb_item(item, client=None, db_path=effective_db_path) # Save status update without generating embeddings yet
 
-        current_statement: Optional[str] = item.latex_statement # Start with existing if any
-        current_proof: Optional[str] = item.latex_proof       # Start with existing if any
-        review_feedback: Optional[str] = item.latex_review_feedback # Use previous feedback
+        # Initialize variables for the loop
+        current_statement: Optional[str] = item.latex_statement # Use existing LaTeX as starting point if available
+        current_proof: Optional[str] = item.latex_proof         # Use existing proof if available
+        review_feedback: Optional[str] = item.latex_review_feedback # Use previous feedback if resuming
         accepted = False
         proof_expected = item.item_type.requires_proof()
 
+        # --- Generation and Review Loop ---
         for cycle in range(MAX_REVIEW_CYCLES):
             logger.info(f"Combined LaTeX Cycle {cycle + 1}/{MAX_REVIEW_CYCLES} for {unique_name}")
 
             # --- Step (a): Generate / Refine Combined LaTeX ---
-            item.update_status(ItemStatus.LATEX_GENERATION_IN_PROGRESS)
-            await save_kb_item(item, client=None, db_path=effective_db_path)
+            item.update_status(ItemStatus.LATEX_GENERATION_IN_PROGRESS) # Mark as generating
+            await save_kb_item(item, client=None, db_path=effective_db_path) # Save status
 
             raw_generator_response = await _call_latex_statement_and_proof_generator(
                 item=item,
@@ -473,38 +643,38 @@ async def generate_and_review_latex(
                 client=client
             )
 
+            item = get_kb_item_by_name(unique_name, effective_db_path) # Refresh item state after potentially long LLM call
+            if not item: raise Exception(f"Item {unique_name} vanished during LaTeX generation.")
+            item.generation_prompt = "See _call_latex_statement_and_proof_generator" # Placeholder, actual prompt is complex
+            item.raw_ai_response = raw_generator_response # Store raw response
+
             if not raw_generator_response:
-                logger.warning(f"Combined LaTeX generator failed or returned no response for {unique_name} in cycle {cycle + 1}")
-                item.update_status(ItemStatus.ERROR, f"LaTeX generator failed in cycle {cycle + 1}")
+                logger.warning(f"Combined LaTeX generator failed or returned empty response for {unique_name} in cycle {cycle + 1}.")
+                item.update_status(ItemStatus.ERROR, f"LaTeX generator failed/empty in cycle {cycle + 1}")
                 await save_kb_item(item, client=None, db_path=effective_db_path)
-                return False
+                return False # Critical failure
 
             # --- Step (a.2): Parse Generator Output ---
             parsed_statement, parsed_proof = _parse_combined_latex(raw_generator_response, item.item_type)
 
-            if not parsed_statement:
+            if parsed_statement is None: # Only statement parsing failure is always critical
                 logger.warning(f"Failed to parse statement from generator output for {unique_name} in cycle {cycle + 1}. Raw: {raw_generator_response[:500]}")
                 item.update_status(ItemStatus.ERROR, f"LaTeX generator output parsing failed (statement) in cycle {cycle + 1}")
-                item.raw_ai_response = raw_generator_response # Save raw for debugging
                 await save_kb_item(item, client=None, db_path=effective_db_path)
-                return False # Exit on parsing failure
+                return False # Exit on critical parsing failure
 
-            if proof_expected and not parsed_proof:
-                logger.warning(f"Failed to parse proof from generator output for {unique_name} (type: {item.item_type.name}) in cycle {cycle + 1}. Raw: {raw_generator_response[:500]}")
-                # Allow continuing to review? Maybe reviewer catches it. Or fail here? Let's fail for now if proof expected but missing.
-                item.update_status(ItemStatus.ERROR, f"LaTeX generator output parsing failed (proof) in cycle {cycle + 1}")
-                item.raw_ai_response = raw_generator_response # Save raw for debugging
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-                return False
+            if proof_expected and parsed_proof is None:
+                # If proof was expected but not parsed, log it but maybe let reviewer catch it?
+                # Or fail definitively? Let's log warning and proceed to review. Reviewer should reject.
+                logger.warning(f"Expected proof for {unique_name} (type: {item.item_type.name}) but failed to parse from generator output in cycle {cycle + 1}.")
+                # Proceed with parsed_statement and parsed_proof=None
 
-
-            current_statement = parsed_statement # Update working versions
+            current_statement = parsed_statement # Update working versions for review
             current_proof = parsed_proof
 
             # --- Step (b): Review Combined LaTeX ---
-            item.update_status(ItemStatus.LATEX_REVIEW_IN_PROGRESS)
-            # Save candidate statement/proof before review? Or just in raw response? Let's store in raw.
-            item.raw_ai_response = raw_generator_response # Store generator output
+            item.update_status(ItemStatus.LATEX_REVIEW_IN_PROGRESS) # Mark as reviewing
+            # Save state before review (includes raw generator response)
             await save_kb_item(item, client=None, db_path=effective_db_path)
 
             raw_reviewer_response = await _call_latex_statement_and_proof_reviewer(
@@ -517,130 +687,173 @@ async def generate_and_review_latex(
                 client=client
             )
 
+            item = get_kb_item_by_name(unique_name, effective_db_path) # Refresh item state
+            if not item: raise Exception(f"Item {unique_name} vanished during LaTeX review.")
+            # Could store reviewer prompt/response too if needed
+            item.raw_ai_response = raw_reviewer_response # Overwrite raw response with reviewer's output
+
             if not raw_reviewer_response:
-                 logger.warning(f"LaTeX reviewer failed or returned no response for {unique_name} in cycle {cycle + 1}")
-                 item.update_status(ItemStatus.ERROR, f"LaTeX reviewer failed in cycle {cycle + 1}")
+                 logger.warning(f"LaTeX reviewer failed or returned empty response for {unique_name} in cycle {cycle + 1}.")
+                 item.update_status(ItemStatus.ERROR, f"LaTeX reviewer failed/empty in cycle {cycle + 1}")
                  await save_kb_item(item, client=None, db_path=effective_db_path)
-                 return False # Exit on reviewer failure
+                 return False # Critical failure
 
             # --- Step (c): Parse and Process Review ---
             judgment, feedback, error_loc = _parse_combined_review(raw_reviewer_response, proof_expected)
 
-            # Get fresh item state before update
-            item = get_kb_item_by_name(unique_name, effective_db_path)
-            if not item: raise Exception("Item vanished during review processing")
-
             if judgment == "Accepted":
-                logger.info(f"Combined LaTeX for {unique_name} accepted by reviewer in cycle {cycle + 1}.")
+                logger.info(f"Combined LaTeX for {unique_name} ACCEPTED by reviewer in cycle {cycle + 1}.")
                 accepted = True
-                item.latex_statement = current_statement # Set accepted content
-                item.latex_proof = current_proof         # Set accepted content (will be None if not proof_expected)
-                item.update_status(ItemStatus.LATEX_ACCEPTED, review_feedback=None) # Clear feedback
-                # Save final state - trigger embedding generation for latex_statement
+                item.latex_statement = current_statement # Store accepted content
+                item.latex_proof = current_proof         # Store accepted proof (or None)
+                item.update_status(ItemStatus.LATEX_ACCEPTED, review_feedback=None) # Clear feedback on acceptance
+                # Save final accepted state, potentially triggering embedding generation in save_kb_item
                 await save_kb_item(item, client=client, db_path=effective_db_path)
-                break # Exit loop successfully
+                break # Exit review loop successfully
             else:
-                logger.warning(f"Combined LaTeX for {unique_name} rejected by reviewer in cycle {cycle + 1}. Location: {error_loc or 'N/A'}. Feedback: {feedback[:200]}...")
+                # Rejected case
+                logger.warning(f"Combined LaTeX for {unique_name} REJECTED by reviewer in cycle {cycle + 1}. Location: {error_loc or 'N/A'}. Feedback: {feedback[:200]}...")
                 review_feedback = feedback # Store feedback for the next generation attempt
-                item.latex_review_feedback = review_feedback # Save feedback to item
-                item.update_status(ItemStatus.PENDING_LATEX_REVIEW) # Indicate needs another cycle
-                await save_kb_item(item, client=None, db_path=effective_db_path) # Save feedback and status
+                item.latex_review_feedback = review_feedback # Save feedback to item DB field
+                item.update_status(ItemStatus.PENDING_LATEX_REVIEW) # Set status indicating rejection needs rework
+                # Save feedback and status update (no embedding generation needed here)
+                await save_kb_item(item, client=None, db_path=effective_db_path)
+                # Continue to the next cycle
 
         # --- After Loop ---
         if not accepted:
-            logger.error(f"Combined LaTeX for {unique_name} rejected after {MAX_REVIEW_CYCLES} cycles.")
-            item = get_kb_item_by_name(unique_name, effective_db_path) # Get final state
+            logger.error(f"Combined LaTeX for {unique_name} was REJECTED after {MAX_REVIEW_CYCLES} cycles.")
+            # Get final item state before updating status
+            item = get_kb_item_by_name(unique_name, effective_db_path)
             if item:
-                 item.update_status(ItemStatus.LATEX_REJECTED_FINAL, review_feedback=review_feedback) # Keep last feedback
+                 # Set final rejected status, keeping the last feedback
+                 item.update_status(ItemStatus.LATEX_REJECTED_FINAL, review_feedback=review_feedback)
                  await save_kb_item(item, client=None, db_path=effective_db_path)
-            return False
+            return False # Return False indicating failure after max cycles
         else:
-             return True # Was accepted within the loop
+             return True # Return True as it was accepted within the loop
 
     except Exception as e:
+        # Catch any unexpected errors during the process
         logger.exception(f"Unhandled exception during combined LaTeX processing for {unique_name}: {e}")
         try:
+             # Attempt to set the item status to ERROR
              item_err = get_kb_item_by_name(unique_name, effective_db_path)
              if item_err and item_err.status not in already_accepted_statuses and item_err.status != ItemStatus.LATEX_REJECTED_FINAL:
-                 item_err.update_status(ItemStatus.ERROR, f"Unhandled LaTeX processor exception: {e}")
+                 item_err.update_status(ItemStatus.ERROR, f"Unhandled LaTeX processor exception: {str(e)[:500]}")
                  await save_kb_item(item_err, client=None, db_path=effective_db_path)
         except Exception as final_err:
+             # Log if even saving the error state fails
              logger.error(f"Failed to save final error state for {unique_name} after exception: {final_err}")
         return False
 
 
 # --- Optional: Batch Processing Function ---
-# (This function remains largely the same, just calls the updated generate_and_review_latex)
 async def process_pending_latex_items(
         client: GeminiClient,
         db_path: Optional[str] = None,
         limit: Optional[int] = None,
         process_statuses: Optional[List[ItemStatus]] = None
     ):
-    """Finds items needing LaTeX processing and runs the generate/review cycle."""
-    if not all([ItemStatus, get_items_by_status, get_kb_item_by_name, save_kb_item]): # Add checks
-         logger.critical("KB Storage components not loaded correctly. Cannot batch process.")
+    """Processes multiple items requiring LaTeX generation and review.
+
+    Queries the database for items in specified statuses (defaulting to
+    PENDING_LATEX, PENDING, LATEX_REJECTED_FINAL), then iterates through them,
+    calling `generate_and_review_latex` for each one up to an optional limit.
+    Logs summary statistics upon completion.
+
+    Args:
+        client (GeminiClient): An initialized LLM client instance passed to the
+            processing function for each item.
+        db_path (Optional[str]): Path to the database file. If None, uses
+            `DEFAULT_DB_PATH`.
+        limit (Optional[int]): The maximum number of items to process in this batch.
+            If None, processes all found items.
+        process_statuses (Optional[List[ItemStatus]]): A list of `ItemStatus` enums
+            indicating which items should be processed. If None, defaults to
+            `[PENDING_LATEX, PENDING, LATEX_REJECTED_FINAL]`.
+    """
+    # Check if necessary components are available
+    if not all([ItemStatus, get_items_by_status, get_kb_item_by_name, save_kb_item]):
+         logger.critical("KB Storage or required components not loaded correctly. Cannot batch process LaTeX items.")
          return
 
     effective_db_path = db_path or DEFAULT_DB_PATH
+    # Default statuses to process if none provided
     if process_statuses is None:
-         process_statuses = {ItemStatus.PENDING_LATEX, ItemStatus.PENDING, ItemStatus.LATEX_REJECTED_FINAL}
+         process_statuses = [ItemStatus.PENDING_LATEX, ItemStatus.PENDING, ItemStatus.LATEX_REJECTED_FINAL, ItemStatus.PENDING_LATEX_REVIEW] # Added review
 
     processed_count = 0
     success_count = 0
     fail_count = 0
     items_to_process = []
 
-    logger.info(f"Querying for items with statuses: {[s.name for s in process_statuses]}")
+    logger.info(f"Starting LaTeX batch processing. Querying for items with statuses: {[s.name for s in process_statuses]}")
+    # Collect items to process from all specified statuses
     for status in process_statuses:
+        if limit is not None and len(items_to_process) >= limit:
+             break # Stop querying if limit already reached
         try:
+            # Use the generator function to get items for the current status
             items_gen = get_items_by_status(status, effective_db_path)
             count_for_status = 0
             for item in items_gen:
                  if limit is not None and len(items_to_process) >= limit:
-                     break
+                     break # Stop adding if limit reached
                  items_to_process.append(item)
                  count_for_status += 1
             logger.debug(f"Found {count_for_status} items with status {status.name}")
-            if limit is not None and len(items_to_process) >= limit:
-                 break
         except Exception as e:
             logger.error(f"Failed to retrieve items with status {status.name}: {e}")
+            # Continue to next status even if one fails
 
     if not items_to_process:
          logger.info("No items found requiring LaTeX processing in the specified statuses.")
          return
 
-    logger.info(f"Found {len(items_to_process)} items for LaTeX processing.")
+    logger.info(f"Found {len(items_to_process)} items matching criteria for LaTeX processing.")
 
+    # Process collected items
     for item in items_to_process:
-        # Check status again before processing
-        current_item_state = get_kb_item_by_name(item.unique_name, effective_db_path)
-        if not current_item_state or current_item_state.status not in process_statuses:
-            logger.info(f"Skipping {item.unique_name} as its status changed ({current_item_state.status.name if current_item_state else 'deleted'}) or item disappeared.")
-            continue
-
-        logger.info(f"--- Processing LaTeX for: {item.unique_name} (ID: {item.id}, Status: {item.status.name}) ---")
+        # Check item status again before processing, in case it changed concurrently
         try:
-            # Call the main combined processing function
+            current_item_state = get_kb_item_by_name(item.unique_name, effective_db_path)
+            # Ensure item exists and is still in one of the target processing statuses
+            if not current_item_state or current_item_state.status not in process_statuses:
+                logger.info(f"Skipping {item.unique_name} as its status changed ({current_item_state.status.name if current_item_state else 'deleted'}) or item disappeared before processing.")
+                continue
+        except Exception as fetch_err:
+             logger.error(f"Error fetching current state for {item.unique_name} before processing: {fetch_err}. Skipping.")
+             continue
+
+
+        logger.info(f"--- Processing LaTeX for: {item.unique_name} (ID: {item.id}, Status: {current_item_state.status.name}) ---")
+        processed_count += 1
+        try:
+            # Call the main combined processing function for the item
             success = await generate_and_review_latex(item.unique_name, client, effective_db_path)
             if success:
                 success_count += 1
+                logger.info(f"Successfully processed LaTeX for {item.unique_name}.")
             else:
                 fail_count += 1
+                logger.warning(f"Failed to process LaTeX for {item.unique_name} (check previous logs for details).")
         except Exception as e:
-             logger.error(f"Error processing item {item.unique_name} in batch: {e}")
+             # Catch unexpected errors from generate_and_review_latex itself
+             logger.error(f"Unhandled error processing item {item.unique_name} in batch: {e}")
              fail_count += 1
+             # Attempt to mark the item as ERROR if processing failed critically
              try:
                   err_item = get_kb_item_by_name(item.unique_name, effective_db_path)
-                  if err_item and err_item.status not in {ItemStatus.PROVEN, ItemStatus.LATEX_ACCEPTED}:
-                     err_item.update_status(ItemStatus.ERROR, f"Batch processing error: {e}")
+                  # Avoid overwriting already accepted/rejected statuses with ERROR
+                  if err_item and err_item.status not in {ItemStatus.PROVEN, ItemStatus.LATEX_ACCEPTED, ItemStatus.LATEX_REJECTED_FINAL}:
+                     err_item.update_status(ItemStatus.ERROR, f"Batch processing error: {str(e)[:500]}")
                      await save_kb_item(err_item, client=None, db_path=effective_db_path)
              except Exception as save_err:
-                  logger.error(f"Failed to save error status for {item.unique_name} during batch: {save_err}")
+                  logger.error(f"Failed to save error status for {item.unique_name} during batch exception handling: {save_err}")
 
-        processed_count += 1
         logger.info(f"--- Finished processing {item.unique_name} ---")
-        # await asyncio.sleep(0.5) # Optional delay
+        # Optional delay between items if needed
+        # await asyncio.sleep(0.5)
 
-    logger.info(f"LaTeX Batch Processing Complete. Total Processed: {processed_count}, Succeeded: {success_count}, Failed: {fail_count}")
+    logger.info(f"LaTeX Batch Processing Complete. Total Attempted: {processed_count}, Succeeded: {success_count}, Failed: {fail_count}")

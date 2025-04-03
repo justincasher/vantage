@@ -1,12 +1,21 @@
 # File: llm_call.py
 
+"""Provides a client for interacting with Google's Gemini API.
+
+This module defines classes and functions to facilitate communication with
+Google's Gemini large language models (LLMs) for both text generation and
+embedding creation. It includes features like asynchronous API calls, automatic
+retries with exponential backoff for transient errors, and integrated cost
+tracking based on model usage (tokens/units).
+"""
+
 import os
 import asyncio
 import json
 import time
 import warnings
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Any, Union, List
+from typing import Dict, Optional, Tuple, Any, Union, List, Callable, Coroutine
 
 # Google GenAI Library
 import google.generativeai as genai
@@ -32,30 +41,62 @@ DEFAULT_SAFETY_SETTINGS = [
 
 @dataclass
 class ModelUsageStats:
-    """Stores usage statistics for a specific model."""
+    """Stores usage statistics for a specific model.
+
+    Attributes:
+        calls (int): Number of successful API calls made for the model.
+        prompt_tokens (int): Total number of input tokens/units processed by
+            the model.
+        completion_tokens (int): Total number of output tokens/units generated
+            by the model (often 0 for embeddings).
+    """
     calls: int = 0
     prompt_tokens: int = 0 # Represents input tokens/units
     completion_tokens: int = 0 # Represents output tokens/units (often 0 for embeddings)
 
 @dataclass
 class ModelCostInfo:
-    """Stores cost per MILLION units (tokens/chars) for a specific model."""
+    """Stores cost per MILLION units (tokens/chars) for a specific model.
+
+    Attributes:
+        input_cost_per_million_units (float): The cost for processing one
+            million input units (e.g., tokens).
+        output_cost_per_million_units (float): The cost for generating one
+            million output units (e.g., tokens).
+    """
     input_cost_per_million_units: float
     output_cost_per_million_units: float
 
 class GeminiCostTracker:
-    """
-    Tracks API call counts, token usage, and estimated costs for Gemini models,
-    using costs specified per million units. Handles generative and embedding models.
+    """Tracks API usage and estimates costs for Google Gemini models.
+
+    This class maintains counts of API calls, input/output units (tokens),
+    and calculates estimated costs based on predefined rates per million units.
+    It handles both generative and embedding models, sourcing cost data from
+    a JSON configuration.
+
+    Attributes:
+        _usage_stats (Dict[str, ModelUsageStats]): A dictionary mapping model
+            names to their accumulated usage statistics.
+        _model_costs (Dict[str, ModelCostInfo]): A dictionary mapping model
+            names to their cost information (per million units).
     """
     def __init__(self, model_costs_json: Optional[str] = None):
-        """
-        Initializes the tracker.
+        """Initializes the GeminiCostTracker.
+
+        Loads model cost information from the provided JSON string or the
+        `GEMINI_MODEL_COSTS` environment variable. Initializes internal
+        dictionaries to store usage and cost data.
 
         Args:
-            model_costs_json: A JSON string mapping model names to their costs per million units.
-                              If None, reads from GEMINI_MODEL_COSTS environment variable.
-                              Example: '{"gemini-1.5-flash-latest": {"input": 0.35, "output": 0.70}, "models/text-embedding-004": {"input": 0.10, "output": 0.0}}'
+            model_costs_json (Optional[str]): A JSON string mapping model names
+                (e.g., "gemini-1.5-flash-latest", "models/text-embedding-004")
+                to their costs per million units. Expected format:
+                `{"model_name": {"input": float, "output": float}, ...}`.
+                The "output" key is optional and defaults to 0.0 if missing
+                (common for embedding models). If None, attempts to read from
+                the `GEMINI_MODEL_COSTS` environment variable. Defaults to an
+                empty dictionary if neither is provided or valid.
         """
         effective_costs_json = model_costs_json if model_costs_json is not None else os.getenv('GEMINI_MODEL_COSTS', FALLBACK_MODEL_COSTS_JSON)
         self._usage_stats: Dict[str, ModelUsageStats] = {}
@@ -63,7 +104,15 @@ class GeminiCostTracker:
         self._parse_model_costs(effective_costs_json)
 
     def _parse_model_costs(self, json_string: str):
-        """Parses the model costs JSON string (expecting cost per million units)."""
+        """Parses the model costs JSON string.
+
+        Populates the `_model_costs` dictionary with ModelCostInfo objects.
+        Handles potential JSON decoding errors and invalid formats gracefully,
+        issuing warnings. Assumes costs are provided per million units.
+
+        Args:
+            json_string (str): The JSON string containing model cost data.
+        """
         try:
             costs_dict = json.loads(json_string)
             for model, costs in costs_dict.items():
@@ -84,7 +133,16 @@ class GeminiCostTracker:
             warnings.warn(f"Error processing GEMINI_MODEL_COSTS: {e}")
 
     def record_usage(self, model: str, input_units: int, output_units: int):
-        """Records a successful API call and its unit usage."""
+        """Records usage statistics for a specific model after a successful API call.
+
+        Increments the call count and adds the input and output units (tokens)
+        to the totals for the given model name.
+
+        Args:
+            model (str): The name of the model used in the API call.
+            input_units (int): The number of input units (e.g., tokens) consumed.
+            output_units (int): The number of output units (e.g., tokens) generated.
+        """
         if model not in self._usage_stats:
             self._usage_stats[model] = ModelUsageStats()
 
@@ -94,7 +152,17 @@ class GeminiCostTracker:
         stats.completion_tokens += output_units # Map output_units -> completion_tokens
 
     def get_total_cost(self) -> float:
-        """Calculates the estimated total cost based on recorded usage and known model costs per million units."""
+        """Calculates the estimated total cost across all tracked models.
+
+        Sums the costs for each model based on its recorded usage (input/output
+        units) and the cost information loaded during initialization (cost per
+        million units). Issues warnings for models with recorded usage but
+        missing cost data.
+
+        Returns:
+            float: The total estimated cost in the currency defined by the
+            cost data (e.g., USD).
+        """
         total_cost = 0.0
         for model, stats in self._usage_stats.items():
             if model in self._model_costs:
@@ -106,7 +174,36 @@ class GeminiCostTracker:
         return total_cost
 
     def get_summary(self) -> Dict[str, Any]:
-        """Returns a summary dictionary of usage and estimated costs."""
+        """Generates a summary report of API usage and estimated costs.
+
+        Provides a dictionary containing the overall estimated cost and a
+        breakdown of usage (calls, input/output units) and estimated cost
+        per model.
+
+        Returns:
+            Dict[str, Any]: A dictionary summarizing usage and costs, e.g.:
+            ```
+            {
+                "total_estimated_cost": 1.23,
+                "usage_by_model": {
+                    "gemini-1.5-flash-latest": {
+                        "calls": 10,
+                        "input_units": 50000,
+                        "output_units": 10000,
+                        "estimated_cost": 0.85
+                    },
+                    "models/text-embedding-004": {
+                        "calls": 5,
+                        "input_units": 200000,
+                        "output_units": 0,
+                        "estimated_cost": 0.38
+                    }
+                }
+            }
+            ```
+            If cost data is missing for a model, its "estimated_cost" will
+            be "Unknown (cost data missing)".
+        """
         total_estimated_cost = self.get_total_cost() # Ensure warnings are potentially triggered
         summary: Dict[str, Any] = {
             "total_estimated_cost": total_estimated_cost,
@@ -132,9 +229,23 @@ class GeminiCostTracker:
 # --- Gemini Client ---
 
 class GeminiClient:
-    """
-    Client for interacting with Google's Gemini API (Generation and Embedding),
-    including async calls, retries, and cost tracking integration.
+    """Client for Google Gemini API with retries and cost tracking.
+
+    Provides asynchronous methods (`generate`, `embed_content`) to interact
+    with Google's generative and embedding models. Includes automatic retries
+    on transient errors (like rate limits or server issues) with exponential
+    backoff. Integrates with `GeminiCostTracker` to monitor API usage and
+    estimate costs. Configuration is loaded from environment variables or
+    passed arguments.
+
+    Attributes:
+        api_key (str): The Google AI API key being used.
+        default_generation_model (str): The default model used for `generate` calls.
+        default_embedding_model (str): The default model used for `embed_content` calls.
+        max_retries (int): The maximum number of retry attempts for failed API calls.
+        backoff_factor (float): The base factor for exponential backoff delays between retries.
+        cost_tracker (GeminiCostTracker): The instance used for tracking usage and costs.
+        safety_settings (Optional[list]): Default safety settings applied to `generate` calls.
     """
     def __init__(self,
                  api_key: Optional[str] = None,
@@ -144,20 +255,41 @@ class GeminiClient:
                  backoff_factor: Optional[float] = None,
                  cost_tracker: Optional[GeminiCostTracker] = None,
                  safety_settings: Optional[list] = DEFAULT_SAFETY_SETTINGS):
-        """
-        Initializes the Gemini Client. Reads required config from environment if not passed.
+        """Initializes the Gemini Client.
+
+        Configures the client using provided arguments or environment variables
+        as fallbacks. Sets up the API key, default models, retry parameters,
+        cost tracker, and safety settings. Configures the underlying
+        `google.generativeai` library.
 
         Args:
-            api_key: Google AI API key. If None, reads from GEMINI_API_KEY env var.
-            default_generation_model: Default Gemini model for generation.
-                                      If None, reads from DEFAULT_GEMINI_MODEL env var.
-            default_embedding_model: Default Gemini model for embeddings.
-                                     If None, reads from DEFAULT_EMBEDDING_MODEL env var or uses fallback.
-                                     Ensures 'models/' prefix if needed for cost tracking consistency.
-            max_retries: Max retry attempts. If None, reads from GEMINI_MAX_RETRIES env var or defaults.
-            backoff_factor: Backoff factor for retries. If None, reads from GEMINI_BACKOFF_FACTOR env var or defaults.
-            cost_tracker: An instance of GeminiCostTracker to record usage (optional).
-            safety_settings: Default Gemini safety settings for generation (optional).
+            api_key (Optional[str]): Google AI API key. If None, reads from
+                `GEMINI_API_KEY` environment variable.
+            default_generation_model (Optional[str]): Default model name for
+                generation (e.g., "gemini-1.5-flash-latest"). If None, reads
+                from `DEFAULT_GEMINI_MODEL` environment variable.
+            default_embedding_model (Optional[str]): Default model name for
+                embeddings (e.g., "models/text-embedding-004"). If None, reads
+                from `DEFAULT_EMBEDDING_MODEL` environment variable or uses
+                `FALLBACK_EMBEDDING_MODEL`. Ensures 'models/' prefix.
+            max_retries (Optional[int]): Maximum retry attempts for API calls.
+                If None, reads from `GEMINI_MAX_RETRIES` env var or uses
+                `FALLBACK_MAX_RETRIES`. Must be non-negative.
+            backoff_factor (Optional[float]): Base factor for exponential backoff
+                delay (seconds). If None, reads from `GEMINI_BACKOFF_FACTOR`
+                env var or uses `FALLBACK_BACKOFF_FACTOR`. Must be non-negative.
+            cost_tracker (Optional[GeminiCostTracker]): An instance of
+                `GeminiCostTracker` to record usage. If None, a new instance
+                is created internally.
+            safety_settings (Optional[list]): Default safety settings for
+                generation, as a list of `genai_types.SafetySettingDict`.
+                Defaults to `DEFAULT_SAFETY_SETTINGS`.
+
+        Raises:
+            RuntimeError: If the `google.generativeai` package is not installed
+                or if configuring the underlying client fails.
+            ValueError: If the API key or default generation model is missing
+                (and not found in environment variables).
         """
         if not genai:
              raise RuntimeError("google.generativeai package is required but not found.")
@@ -218,8 +350,36 @@ class GeminiClient:
              raise RuntimeError(f"Failed to configure Google GenAI client: {e}") from e
 
     # --- Private Helper for Retries ---
-    async def _execute_with_retry(self, api_call_func, *args, _model_name_for_log='unknown_model', **kwargs):
-        """ Executes an async API call with retry logic. """
+    async def _execute_with_retry(self,
+                                  api_call_func: Callable[..., Any],
+                                  *args: Any,
+                                  _model_name_for_log: str = 'unknown_model',
+                                  **kwargs: Any) -> Any:
+        """Executes a synchronous API call asynchronously with retry logic.
+
+        Wraps a synchronous Google GenAI SDK function call (like `model.generate_content`
+        or `genai.embed_content`) using `asyncio.to_thread`. Implements
+        exponential backoff retries for specific Google API errors (rate limits,
+        server errors) and general exceptions.
+
+        Args:
+            api_call_func (Callable[..., Any]): The synchronous Google GenAI SDK
+                function to call (e.g., `model_instance.generate_content`).
+            *args: Positional arguments to pass to `api_call_func`.
+            _model_name_for_log (str): The name of the model being called, used
+                for logging/warning messages.
+            **kwargs: Keyword arguments to pass to `api_call_func`.
+
+        Returns:
+            Any: The result returned by the successful `api_call_func`.
+
+        Raises:
+            google_api_exceptions.GoogleAPIError: If a non-retryable API error
+                (like 4xx client errors) occurs.
+            Exception: If the API call fails after all retry attempts due to
+                retryable API errors or other exceptions. The specific exception
+                encountered on the last attempt is raised.
+        """
         final_error: Optional[Exception] = None
         model_name = _model_name_for_log
 
@@ -227,6 +387,7 @@ class GeminiClient:
         for attempt in range(total_attempts):
             try:
                 # Use asyncio.to_thread to run the synchronous SDK call in a separate thread
+                # Note: This assumes api_call_func itself is synchronous.
                 response = await asyncio.to_thread(api_call_func, *args, **kwargs)
                 return response # Success
 
@@ -241,15 +402,17 @@ class GeminiClient:
                  final_error = e
                  # Decide if retryable based on status code maybe? For now, retry most.
                  # 4xx errors are typically not retryable (Bad Request, Not Found, Invalid Argument)
-                 if 400 <= getattr(e, 'code', 0) < 500:
+                 # Allow 429 (ResourceExhausted, handled above) to be retryable.
+                 status_code = getattr(e, 'code', 0)
+                 if 400 <= status_code < 500 and status_code != 429:
                       warnings.warn(f"API Client Error (4xx) for {model_name} on attempt {attempt + 1}/{total_attempts}: {e}. Not retrying.")
-                      break # Don't retry client errors
-                 else: # Retry server errors (5xx) or unknown API errors
-                     warnings.warn(f"API Server/Unknown Error for {model_name} on attempt {attempt + 1}/{total_attempts}: {e}")
+                      break # Don't retry most client errors
+                 else: # Retry server errors (5xx), 429, or unknown API errors
+                     warnings.warn(f"API Server/Retryable Error for {model_name} on attempt {attempt + 1}/{total_attempts}: {e}")
                  # Continue to retry logic below
 
             except Exception as e:
-                # Catch broader exceptions (network issues, unexpected errors)
+                # Catch broader exceptions (network issues, unexpected errors during async wrapper)
                 final_error = e
                 warnings.warn(f"Unexpected Error during API call for {model_name} on attempt {attempt + 1}/{total_attempts}: {e}")
                 # Continue to retry logic below
@@ -269,7 +432,8 @@ class GeminiClient:
                 break # Exit loop after final attempt
 
         # If loop finished without returning, raise the last captured error
-        raise final_error if final_error is not None else Exception(f"Unknown error during API call to {model_name} after {total_attempts} attempts")
+        raise final_error if final_error is not None else \
+               Exception(f"Unknown error during API call to {model_name} after {total_attempts} attempts")
 
 
     # --- Public API Methods ---
@@ -278,26 +442,43 @@ class GeminiClient:
                        prompt: str,
                        *,
                        model: Optional[str] = None,
-                       system_prompt: Optional[str] = None, # Note: system_instruction is arg name
+                       system_prompt: Optional[str] = None,
                        generation_config_override: Optional[Dict[str, Any]] = None,
                        safety_settings_override: Optional[list] = None
                        ) -> str:
-        """
-        Generates content using the specified Gemini model, with retry logic.
+        """Generates content using a specified Gemini model with retry logic.
+
+        Constructs the request with the prompt and optional system instruction,
+        generation config, and safety settings. Uses the `_execute_with_retry`
+        helper to handle the API call to the generative model. Processes the
+        response to extract the text content and records usage statistics if a
+        cost tracker is configured and usage metadata is available.
 
         Args:
-            prompt: The main user prompt.
-            model: Specific Gemini model name. Defaults to client's default_generation_model.
-            system_prompt: Optional system instruction.
-            generation_config_override: Optional dictionary to override generation config.
-            safety_settings_override: Optional list to override safety settings.
+            prompt (str): The main user prompt for content generation.
+            model (Optional[str]): The specific Gemini model name to use
+                (e.g., "gemini-1.5-flash-latest"). If None, uses the client's
+                `default_generation_model`.
+            system_prompt (Optional[str]): An optional system instruction to guide
+                the model's behavior. Passed during model initialization.
+            generation_config_override (Optional[Dict[str, Any]]): A dictionary
+                containing generation parameters (like temperature, top_p,
+                max_output_tokens) to override the model's defaults. See
+                `google.generativeai.types.GenerationConfig` for options.
+            safety_settings_override (Optional[list]): A list of safety setting
+                dictionaries to override the client's default safety settings
+                for this specific call. See `google.generativeai.types.SafetySettingDict`.
 
         Returns:
-            The generated text content.
+            str: The generated text content from the model.
 
         Raises:
-            Exception: If the API call fails after all retry attempts.
-            ValueError: If the response is invalid (blocked, empty) or model init fails.
+            ValueError: If the specified model name is invalid, if the API
+                response indicates the content was blocked due to safety
+                settings, or if the response structure is unexpected or lacks
+                text content.
+            Exception: If the API call fails after all retry attempts (reraised
+                from `_execute_with_retry`).
         """
         effective_model = model or self.default_generation_model
         gen_config = genai_types.GenerationConfig(**generation_config_override) if generation_config_override else None
@@ -319,15 +500,16 @@ class GeminiClient:
 
         try:
             # Use the retry helper
-            api_kwargs = { 
+            api_kwargs = {
                 'contents': contents,
                 'generation_config': gen_config,
                 'safety_settings': safety_settings,
             }
+            # api_call_func is the bound method model_instance.generate_content
             response = await self._execute_with_retry(
                 model_instance.generate_content,
                 _model_name_for_log=effective_model, # Log arg
-                **api_kwargs # API args
+                **api_kwargs # API args for generate_content
             )
 
             # --- Process Response ---
@@ -344,9 +526,11 @@ class GeminiClient:
                 # Handle cases where accessing .text fails (e.g., blocked content)
                  block_reason = "Unknown"
                  try:
+                     # Try to extract the blocking reason from prompt_feedback
                      if response.prompt_feedback and response.prompt_feedback.block_reason:
+                         # Use the enum name if possible, otherwise the string representation
                          block_reason = getattr(response.prompt_feedback.block_reason, 'name', str(response.prompt_feedback.block_reason))
-                 except AttributeError: pass
+                 except AttributeError: pass # Ignore if prompt_feedback structure is different
                  raise ValueError(f"API call failed for {effective_model}: Content blocked or invalid. Reason: {block_reason}. Original Error: {e}") from e
             except AttributeError:
                  # If .text attribute doesn't exist (shouldn't happen with valid response)
@@ -355,19 +539,24 @@ class GeminiClient:
             # Fallback text extraction if needed (though response.text should usually work or raise error)
             if generated_text is None:
                  try:
+                     # Access text through candidates -> content -> parts structure
                      if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
                          generated_text = "".join(part.text for part in response.candidates[0].content.parts if hasattr(part, 'text'))
-                     if not generated_text or not generated_text.strip(): # Ensure we got some text
-                         raise ValueError(f"API call failed for {effective_model}: Received no valid text content in response.")
+                     # Ensure we actually got some text and it's not just whitespace
+                     if not generated_text or not generated_text.strip():
+                         raise ValueError(f"API call failed for {effective_model}: Received no valid text content in response structure.")
                  except (AttributeError, IndexError, ValueError) as text_extract_err:
-                     raise ValueError(f"API call failed for {effective_model}: Could not extract text from response structure.") from text_extract_err
+                     # Raise if the structure traversal or final check fails
+                     raise ValueError(f"API call failed for {effective_model}: Could not extract text from the expected response structure.") from text_extract_err
 
             # --- Token Counting & Cost Tracking ---
             if usage_metadata:
                 try:
-                    # Use names consistent with google-genai v0.3+
+                    # Use attribute names consistent with google-genai v0.3+
                     prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-                    completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0) # Sum of tokens across candidates
+                    # Sum of tokens across all generated candidates
+                    completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
+                    # Ensure they are integers
                     prompt_tokens = int(prompt_tokens) if prompt_tokens is not None else 0
                     completion_tokens = int(completion_tokens) if completion_tokens is not None else 0
                 except (AttributeError, ValueError, TypeError) as e:
@@ -385,11 +574,12 @@ class GeminiClient:
 
         except ValueError as ve:
              # Catch ValueErrors raised during response processing (blocking, empty content)
-             # These are definitive failures, don't wrap further
+             # These are considered definitive failures, don't wrap further
              raise ve
         except Exception as e:
              # Catch errors from _execute_with_retry (after all retries failed)
-             raise Exception(f"API call to generation model '{effective_model}' failed after multiple retries.") from e
+             # or potential errors during API response processing not caught above.
+             raise Exception(f"API call to generation model '{effective_model}' failed after retries or during processing.") from e
 
 
     async def embed_content(self,
@@ -397,30 +587,46 @@ class GeminiClient:
                             task_type: str,
                             *,
                             model: Optional[str] = None,
-                            title: Optional[str] = None, # Optional for RETRIEVAL_DOCUMENT
-                            output_dimensionality: Optional[int] = None # Optional truncation
+                            title: Optional[str] = None,
+                            output_dimensionality: Optional[int] = None
                             ) -> List[List[float]]:
-        """
-        Generates embeddings for the given text content(s) using the specified Gemini model,
-        with retry logic.
+        """Generates embeddings for text content(s) using a Gemini model.
+
+        Handles both single string and batch (list of strings) embedding requests.
+        Uses the `_execute_with_retry` helper for the API call. Processes the
+        response dictionary to extract the embedding vector(s). Attempts to
+        record usage statistics if a cost tracker is configured and usage
+        metadata is available in the response (though often absent for embeddings).
 
         Args:
-            contents: A single string or a list of strings to embed.
-            task_type: The task type for the embedding (e.g., "RETRIEVAL_DOCUMENT",
-                       "RETRIEVAL_QUERY", "SEMANTIC_SIMILARITY"). See Google AI docs.
-            model: Specific Gemini embedding model name. Defaults to client's default_embedding_model.
-                   Should typically start with 'models/' like 'models/text-embedding-004'.
-            title: An optional title when task_type="RETRIEVAL_DOCUMENT".
-            output_dimensionality: Optional dimension to truncate the output embedding to.
+            contents (Union[str, List[str]]): A single string or a list of strings
+                to be embedded.
+            task_type (str): The intended task for the embedding, which influences
+                its characteristics (e.g., "RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY",
+                "SEMANTIC_SIMILARITY", "CLASSIFICATION"). Refer to Google AI
+                documentation for valid task types.
+            model (Optional[str]): The specific Gemini embedding model name to use
+                (e.g., "models/text-embedding-004"). If None, uses the client's
+                `default_embedding_model`. Should typically start with 'models/'.
+            title (Optional[str]): An optional title for the document, used only
+                when `task_type` is "RETRIEVAL_DOCUMENT". Ignored otherwise.
+            output_dimensionality (Optional[int]): An optional integer to specify
+                the desired dimension to truncate the resulting embedding vector(s) to.
+                If None, the model's default dimensionality is used.
 
         Returns:
-            A list of embedding vectors (list of lists of floats). If a single string
-            was input, the outer list will contain one vector.
+            List[List[float]]: A list containing the embedding vector(s). If a
+            single string was provided as input, the outer list will contain
+            a single vector (list of floats). If a list of strings was provided,
+            the outer list will contain multiple vectors in the corresponding order.
 
         Raises:
-            Exception: If the API call fails after all retry attempts.
-            ValueError: If the response is invalid or parameters are incorrect.
-            TypeError: If input types are wrong.
+            TypeError: If `contents` is not a string or a list of strings, or
+                if it's a list containing non-string items.
+            ValueError: If the API response is missing the expected 'embedding'
+                or 'embeddings' key, or if the embedding format is invalid.
+            Exception: If the API call fails after all retry attempts (reraised
+                from `_execute_with_retry`).
         """
         effective_model = model or self.default_embedding_model
         if not effective_model.startswith("models/"):
@@ -431,83 +637,93 @@ class GeminiClient:
 
         # Validate contents type
         if not isinstance(contents, (str, list)):
-             raise TypeError("contents must be a string or a list of strings.")
+             raise TypeError("Input 'contents' must be a string or a list of strings.")
         if isinstance(contents, list) and not all(isinstance(item, str) for item in contents):
-             raise TypeError("If contents is a list, all items must be strings.")
+             raise TypeError("If 'contents' is provided as a list, all its items must be strings.")
 
         # Prepare arguments for genai.embed_content
         embed_args = {
              "model": effective_model,
-             "content": contents, # Pass str or list directly
+             "content": contents, # Pass str or list directly to the SDK function
              "task_type": task_type,
         }
         if title is not None and task_type == "RETRIEVAL_DOCUMENT":
             embed_args["title"] = title
         elif title is not None:
+             # Warn if title is provided but task type doesn't support it
              warnings.warn(f"Ignoring 'title' argument as task_type is '{task_type}', not 'RETRIEVAL_DOCUMENT'.")
 
         if output_dimensionality is not None:
+             # Add output_dimensionality if provided
              embed_args["output_dimensionality"] = output_dimensionality
 
         try:
-            # Use the retry helper
+            # Use the retry helper; genai.embed_content is the sync function to wrap
             response_dict = await self._execute_with_retry(
                 genai.embed_content,
                 _model_name_for_log=effective_model, # Log arg
-                **embed_args # API args
+                **embed_args # API args for embed_content
             )
 
             # --- Process Response ---
             embeddings: List[List[float]] = []
-            if 'embedding' in response_dict: # Response for single string input
+            # Response structure differs for single vs. batch input
+            if 'embedding' in response_dict: # Expected response for single string input
                  if isinstance(response_dict['embedding'], list):
+                    # Wrap the single embedding list in another list to match return type
                     embeddings = [response_dict['embedding']]
                  else:
-                      raise ValueError(f"Invalid embedding format received for single input in {effective_model}.")
-            elif 'embeddings' in response_dict: # Response for list input
+                      # Raise error if the format is unexpected
+                      raise ValueError(f"Invalid embedding format received for single input from model {effective_model}.")
+            elif 'embeddings' in response_dict: # Expected response for list input
+                 # Check if it's a list of lists (of floats, implicitly)
                  if isinstance(response_dict['embeddings'], list) and all(isinstance(e, list) for e in response_dict['embeddings']):
                       embeddings = response_dict['embeddings']
                  else:
-                      raise ValueError(f"Invalid embedding format received for list input in {effective_model}.")
+                      # Raise error if the format is unexpected
+                      raise ValueError(f"Invalid embedding format received for list input from model {effective_model}.")
             else:
-                # Should not happen if API call succeeded without error
-                raise ValueError(f"API call for {effective_model} succeeded but response missing 'embedding' or 'embeddings' key.")
+                # This should not happen if the API call via _execute_with_retry succeeded
+                raise ValueError(f"API call for {effective_model} succeeded but the response dictionary is missing the expected 'embedding' or 'embeddings' key.")
 
             # --- Token Counting & Cost Tracking (Attempt) ---
-            # NOTE: Usage metadata is often NOT included in embedding responses.
-            # Add specific check if response structure is known, otherwise assume unavailable.
-            usage_metadata = response_dict.get('usage_metadata', None) # Assuming it might be dict
+            # NOTE: Usage metadata is often NOT included in embedding responses from the API.
+            # We attempt to extract it but expect it might be missing.
+            usage_metadata = response_dict.get('usage_metadata', None) # Safely get metadata if present
             input_units = 0
-            output_units = 0 # Always 0 for embeddings
+            output_units = 0 # Embeddings only have input cost, output is fixed/implicit
 
             if usage_metadata and isinstance(usage_metadata, dict):
-                 # Example: Adjust key based on actual response if available
-                 # E.g., 'total_token_count', 'prompt_token_count'
-                 token_key = 'total_token_count' # Replace with actual key if known
+                 # Assume the key for input tokens might be 'total_token_count' or similar
+                 # Adjust this key based on actual observed responses if possible.
+                 token_key = 'total_token_count' # Placeholder - check actual API response structure
                  if token_key in usage_metadata:
                      try:
                          input_units = int(usage_metadata[token_key])
                      except (ValueError, TypeError):
-                         warnings.warn(f"Could not parse '{token_key}' from usage metadata for {effective_model}.")
+                         warnings.warn(f"Could not parse '{token_key}' from usage metadata for {effective_model}. Cost tracking might be inaccurate.")
                          input_units = 0
                  else:
-                      warnings.warn(f"Expected key '{token_key}' not found in usage metadata for {effective_model}.")
+                      warnings.warn(f"Expected token count key ('{token_key}') not found in usage metadata for {effective_model}. Cost tracking might be inaccurate.")
 
+                 # Record usage only if we found a positive number of input units
                  if input_units > 0 and self.cost_tracker:
                       self.cost_tracker.record_usage(effective_model, input_units, output_units)
                  elif input_units == 0:
-                      # Only warn if we expected metadata but couldn't parse/find tokens
-                      warnings.warn(f"Could not determine input units from usage metadata for {effective_model}. Cost tracking may be inaccurate.")
+                      # Only issue a warning if we found metadata but couldn't get tokens from it.
+                      warnings.warn(f"Could not determine input units from available usage metadata for {effective_model}. Cost tracking may be inaccurate for this call.")
 
             else:
-                 # This is the expected path if usage metadata is typically absent
+                 # This is the common case: usage metadata is absent.
+                 # Issue a warning that cost tracking is skipped for this specific call.
                  warnings.warn(f"Usage metadata not found in response for embedding model '{effective_model}'. Cost tracking skipped for this call.")
 
             return embeddings
 
         except ValueError as ve:
-            # Catch ValueErrors raised during response processing
+            # Catch ValueErrors raised during response processing (e.g., invalid format)
             raise ve
         except Exception as e:
             # Catch errors from _execute_with_retry (after all retries failed)
-            raise Exception(f"API call to embedding model '{effective_model}' failed after multiple retries.") from e
+            # or potential errors during API response processing not caught above.
+            raise Exception(f"API call to embedding model '{effective_model}' failed after retries or during processing.") from e
