@@ -1,3 +1,4 @@
 # docs/requirements.txt
 mkdocs>=1.5
 mkdocs-material>=9.0
+mkdocs-gen-files>=0.5.0
