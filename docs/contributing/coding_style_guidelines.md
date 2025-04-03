@@ -34,15 +34,36 @@ def example_function(param1, param2):
 
   Args:
     param1 (int): The first parameter, expected to be an integer.
-    param2 (str): The second parameter, expected to be a string.
+    param2 (str): The second parameter, expected to be a string
+      representation of a number.
 
   Returns:
-    float: The result of the calculation based on the inputs.
-    Returns None if the calculation cannot be performed.
+    float: The result of adding param1 to the numeric value of param2.
+    # Note: The original docstring mentioned returning None if the
+    # calculation cannot be performed, but raising exceptions for bad
+    # input (as specified in Raises) is generally preferred.
 
   Raises:
     ValueError: If param1 is negative.
     TypeError: If param2 is not a valid string representation of a number.
   """
+  if not isinstance(param1, int):
+      # Optional: Add type check for param1 if strict typing is desired
+      # although the docstring only mentions raising ValueError for negativity.
+      pass # Or raise TypeError("param1 must be an integer.")
+
   if param1 < 0:
-    raise ValueError("
+    raise ValueError("param1 cannot be negative.")
+
+  try:
+    # Attempt to convert param2 to a float for calculation
+    param2_numeric = float(param2)
+  except (ValueError, TypeError):
+    # Catch errors if param2 cannot be converted (e.g., "abc" or None)
+    raise TypeError("param2 must be a valid string representation of a number.")
+
+  # Perform the calculation
+  result = float(param1 + param2_numeric)
+
+  return result
+```
