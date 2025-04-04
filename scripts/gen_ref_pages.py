@@ -114,20 +114,6 @@ for path in sorted(package_dir.rglob("*.py")):
 
     # Use mkdocs_gen_files to open the target Markdown file for writing.
     with mkdocs_gen_files.open(output_md_path, "w") as fd:
-
-        # --- TEMPORARY WORKAROUND ---
-        # Manually write the extracted module docstring at the top of the file.
-        if module_docstring:
-            print("", file=fd) # Add a blank line for spacing
-            print(module_docstring, file=fd) # Write the docstring
-            print("\n", file=fd) # Add another blank line
-        else:
-            # Add spacing even if no docstring was found
-            print(f"\n", file=fd)
-
-        # Add a separator before the mkdocstrings identifier
-        print("---\n", file=fd)
-
         # Write the mkdocstrings identifier for members.
         print(f"::: {doc_identifier}", file=fd)
 
