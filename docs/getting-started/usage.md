@@ -16,7 +16,7 @@ This document provides examples demonstrating the core workflow of the Lean Auto
     * `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME`: The name of your shared Lean library module (e.g., `ProvenKB`).
 * The shared Lean library at `LEAN_AUTOMATOR_SHARED_LIB_PATH` should be initialized (`lake init <YourModuleName>`).
 
-*(These examples assume async execution using `asyncio.run()`)*
+*(These examples assume async execution using `asyncio.run()`. Due to the asynchronous nature and potential subprocess usage (especially for Lean interaction), running these examples directly in a Python script or an interactive terminal like `ipython` is recommended over standard Jupyter Notebook environments.)*
 
 ---
 
@@ -27,6 +27,8 @@ First, ensure the database schema exists and initialize the Gemini client.
 ```python
 import asyncio
 from lean_automator import kb_storage, llm_call
+# Call load_dotenv() to load variables from the .env file
+from dotenv import load_dotenv; load_dotenv()
 
 # Initialize the database (creates tables if they don't exist)
 # Uses KB_DB_PATH env var or default 'knowledge_base.sqlite'
@@ -46,7 +48,6 @@ except Exception as e:
     print(f"FATAL: Failed to initialize Gemini Client: {e}")
     # Cannot proceed without the client
     exit()
-
 ```
 
 ---
