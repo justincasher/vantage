@@ -45,4 +45,4 @@ typing_extensions==4.13.0
 uritemplate==4.1.1
 urllib3==2.3.0
 # Editable install with no version control (vantage==0.1.0)
--e /Users/justinasher/Desktop/ML/vantage
+# -e /Users/justinasher/Desktop/ML/vantage
