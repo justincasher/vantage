@@ -4,7 +4,18 @@ import asyncio
 import os
 import logging
 import sys
+
+# --- Load Environment Variables or Exit ---
 from dotenv import load_dotenv
+env_loaded_successfully = load_dotenv()
+
+if not env_loaded_successfully:
+    # Print error message to standard error
+    print("\nCRITICAL ERROR: Could not find or load the .env file.", file=sys.stderr)
+    print("This script relies on environment variables defined in that file.", file=sys.stderr)
+    # Show where it looked relative to, which helps debugging
+    print(f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.", file=sys.stderr)
+    sys.exit(1) # Exit the script with a non-zero status code indicating failure
 
 # --- Add project root to path to allow imports ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -180,7 +191,6 @@ async def main():
     """Main execution function."""
     logger.info(f"--- Starting Basic Lean Processor Test ({TARGET_ITEM_NAME}) ---")
 
-    if not load_dotenv(): logger.warning("Could not find .env file.")
     if not os.getenv("GEMINI_API_KEY"): logger.critical("GEMINI_API_KEY missing."); return
 
     if not await setup_test_data(TEST_DB_PATH):

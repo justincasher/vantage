@@ -51,6 +51,18 @@ except ImportError as e:
     # Define dummy types/functions to allow script loading without crashing
     KBItem = None; ItemStatus = None; ItemType = None; get_kb_item_by_name = None; save_kb_item = None; get_items_by_status = None; GeminiClient = None; DEFAULT_DB_PATH = None; lean_interaction = None; lean_proof_repair = None; # type: ignore
 
+# --- Load Environment Variables or Exit ---
+from dotenv import load_dotenv
+env_loaded_successfully = load_dotenv()
+
+if not env_loaded_successfully:
+    # Print error message to standard error
+    print("\nCRITICAL ERROR: Could not find or load the .env file.", file=sys.stderr)
+    print("This script relies on environment variables defined in that file.", file=sys.stderr)
+    # Show where it looked relative to, which helps debugging
+    print(f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.", file=sys.stderr)
+    sys.exit(1) # Exit the script with a non-zero status code indicating failure
+
 # --- Logging ---
 logger = logging.getLogger(__name__)
 
