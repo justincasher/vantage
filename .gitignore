@@ -4,10 +4,11 @@
 
 # SQLite database files
 # These store data, not source code, and shouldn't be version controlled.
-*.sqlite
-*.sqlite-journal
-*.sqlite-wal
-*.sqlite-shm
+# Uncomment if they become too large to push/pull
+# *.sqlite
+# *.sqlite-journal
+# *.sqlite-wal
+# *.sqlite-shm
 
 # Python cache files
 __pycache__/
@@ -19,4 +20,8 @@ __pycache__/
 # Virtual environment
 venv/
 
+# Test jupyter notebook
 test.ipynb 
+
+# pydoc markdown
+mkdocs.yml

@@ -1,0 +1,18 @@
+# Create markdown containing documentation (for writing code with LLM)
+
+loader:
+  type: python
+  search_path: ['src']
+  packages:
+    - name: lean_automator
+
+renderer:
+  type: markdown
+
+parser:
+  type: google
+
+filter:
+  - documented-only
+  - not-private
+
