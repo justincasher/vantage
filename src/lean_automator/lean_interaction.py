@@ -374,12 +374,23 @@ async def _update_persistent_library(
             'check': False, # We'll check the return code manually
             'env': os.environ.copy() # Inherit environment, may need LEAN_PATH adjustments if complex deps
         }
+
+        # Logging before the subprocess call
+        logger.info(f"Persistent build command: {' '.join(command)}")
+        logger.info(f"Persistent build CWD: {shared_lib_path}")
+        # Optional: log environment details if needed
+        # logger.debug(f"Persistent build env: {run_args.get('env')}")
+
         # Run the potentially blocking subprocess in an executor thread
         lake_process_result = await loop.run_in_executor(None, functools.partial(subprocess.run, **run_args))
 
+        # Logging after the subprocess call (unconditionally) 
         stdout_output = lake_process_result.stdout or ""
         stderr_output = lake_process_result.stderr or ""
         log_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}"
+        # Log details always for debugging, maybe use INFO level temporarily
+        logger.info(f"Persistent build return code: {lake_process_result.returncode}")
+        logger.info(f"Persistent build full output:\n{log_output}")
 
         if lake_process_result.returncode == 0:
             logger.info(f"Persistent library build successful for target '{target_build_name}'.")
