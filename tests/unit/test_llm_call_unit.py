@@ -706,7 +706,7 @@ async def test_client_embed_all_retries_fail(mocker, mock_env_vars_base, mock_ge
     content = "Failure embed test"
     task = "RETRIEVAL_QUERY"
     # The final exception should be wrapped by the client's generic message
-    with pytest.raises(Exception, match=f"API call to embedding model '{MOCK_DEFAULT_EMBED_MODEL}' failed after multiple retries.") as exc_info:
+    with pytest.raises(Exception, match=f"API call to embedding model '{MOCK_DEFAULT_EMBED_MODEL}' failed after retries or during processing.") as exc_info:
         await client.embed_content(content, task)
 
     # Check that the original error is the cause
@@ -726,7 +726,7 @@ async def test_client_embed_invalid_response_format(mocker, mock_env_vars_base, 
     # Mock response missing 'embedding' or 'embeddings' keys
     mock_embed_func.return_value = {'wrong_key': [0.1]}
 
-    with pytest.raises(ValueError, match="response missing 'embedding' or 'embeddings' key"):
+    with pytest.raises(ValueError, match=f"API call for {MOCK_DEFAULT_EMBED_MODEL} succeeded but the response dictionary is missing the expected 'embedding' or 'embeddings' key"):
         await client.embed_content("Test", "RETRIEVAL_QUERY")
 
     mock_embed_func.assert_called_once()
@@ -739,10 +739,10 @@ async def test_client_embed_input_type_validation(mocker, mock_env_vars_base, mo
     _, _, mock_embed_func = mock_genai_lib
     client = GeminiClient()
 
-    with pytest.raises(TypeError, match="contents must be a string or a list of strings"):
+    with pytest.raises(TypeError, match="Input 'contents' must be a string or a list of strings"):
         await client.embed_content(123, "RETRIEVAL_QUERY") # Invalid type
 
-    with pytest.raises(TypeError, match="If contents is a list, all items must be strings"):
+    with pytest.raises(TypeError, match="If 'contents' is provided as a list, all its items must be strings"):
         await client.embed_content(["a string", 123], "RETRIEVAL_QUERY") # List with invalid item
 
     mock_embed_func.assert_not_called() # Should fail before API call

@@ -667,24 +667,34 @@ class GeminiClient:
 
             # --- Process Response ---
             embeddings: List[List[float]] = []
-            # Response structure differs for single vs. batch input
-            if 'embedding' in response_dict: # Expected response for single string input
-                 if isinstance(response_dict['embedding'], list):
-                    # Wrap the single embedding list in another list to match return type
-                    embeddings = [response_dict['embedding']]
+
+            if 'embedding' in response_dict:
+                 result = response_dict['embedding']
+                 # Check if the input was a list
+                 if isinstance(contents, list):
+                      # Assume 'embedding' key holds the list of results for batch input
+                      if isinstance(result, list) and all(isinstance(e, list) for e in result):
+                           # It's already the list we want: [[emb1], [emb2]]
+                           embeddings = result
+                      else:
+                           # Handle potential malformed list response
+                           raise ValueError(f"Invalid embedding format received under 'embedding' key for list input from model {effective_model}.")
+                 elif isinstance(result, list):
+                      # Single input case: result is the vector (list of floats)
+                      # Wrap the single embedding vector in a list to match return type List[List[float]]
+                      embeddings = [result] # result is [vector] -> return [[vector]]
                  else:
-                      # Raise error if the format is unexpected
-                      raise ValueError(f"Invalid embedding format received for single input from model {effective_model}.")
-            elif 'embeddings' in response_dict: # Expected response for list input
-                 # Check if it's a list of lists (of floats, implicitly)
-                 if isinstance(response_dict['embeddings'], list) and all(isinstance(e, list) for e in response_dict['embeddings']):
-                      embeddings = response_dict['embeddings']
+                      # Handle potential malformed single response
+                      raise ValueError(f"Invalid embedding format received under 'embedding' key for single input from model {effective_model}.")
+            elif 'embeddings' in response_dict: # Keep as fallback just in case API behaviour changes/differs
+                 result = response_dict['embeddings']
+                 if isinstance(result, list) and all(isinstance(e, list) for e in result):
+                      embeddings = result
                  else:
-                      # Raise error if the format is unexpected
-                      raise ValueError(f"Invalid embedding format received for list input from model {effective_model}.")
+                      raise ValueError(f"Invalid embedding format received under 'embeddings' key from model {effective_model}.")
             else:
-                # This should not happen if the API call via _execute_with_retry succeeded
-                raise ValueError(f"API call for {effective_model} succeeded but the response dictionary is missing the expected 'embedding' or 'embeddings' key.")
+                 # Handle case where neither expected key is present
+                 raise ValueError(f"API call for {effective_model} succeeded but the response dictionary is missing the expected 'embedding' or 'embeddings' key.")
 
             # --- Token Counting & Cost Tracking (Attempt) ---
             # NOTE: Usage metadata is often NOT included in embedding responses from the API.
