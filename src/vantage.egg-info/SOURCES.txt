@@ -4,7 +4,10 @@ pyproject.toml
 src/lean_automator/__init__.py
 src/lean_automator/kb_search.py
 src/lean_automator/kb_storage.py
+src/lean_automator/latex_processor.py
 src/lean_automator/lean_interaction.py
+src/lean_automator/lean_processor.py
+src/lean_automator/lean_proof_repair.py
 src/lean_automator/llm_call.py
 src/vantage.egg-info/PKG-INFO
 src/vantage.egg-info/SOURCES.txt
