@@ -48,6 +48,18 @@ except ImportError:
      DEFAULT_DB_PATH = 'knowledge_base.sqlite' # Define dummy default
      # raise # Or re-raise the error if preferred
 
+# --- Load Environment Variables or Exit ---
+from dotenv import load_dotenv
+env_loaded_successfully = load_dotenv()
+
+if not env_loaded_successfully:
+    # Print error message to standard error
+    print("\nCRITICAL ERROR: Could not find or load the .env file.", file=sys.stderr)
+    print("This script relies on environment variables defined in that file.", file=sys.stderr)
+    # Show where it looked relative to, which helps debugging
+    print(f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.", file=sys.stderr)
+    sys.exit(1) # Exit the script with a non-zero status code indicating failure
+
 # Configure logging
 logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -324,7 +336,7 @@ async def _update_persistent_library(
         lean_file_rel = module_path_rel.with_suffix('.lean')
         # Destination path is relative to the shared library's *source directory* (hardcoded name)
         # Example: /path/to/shared/VantageLib/My/Module.lean
-        dest_file_abs = shared_lib_path / SHARED_LIB_SRC_DIR_NAME / lean_file_rel
+        dest_file_abs = shared_lib_path / lean_file_rel
         logger.debug(f"Destination path in persistent library: {dest_file_abs}")
     except ValueError as e:
         logger.error(f"Invalid module name '{item.unique_name}'. Cannot determine persistent path: {e}")
@@ -357,7 +369,7 @@ async def _update_persistent_library(
     # 3. Trigger 'lake build' within the persistent library directory
     # We build the specific module that was just added/updated.
     # The target name needs to be fully qualified relative to the package root.
-    target_build_name = f"{SHARED_LIB_SRC_DIR_NAME}.{item.unique_name}"
+    target_build_name = item.unique_name
 
     command = [lake_executable_path, 'build', target_build_name]
     logger.info(f"Triggering persistent library build: {' '.join(command)} in {shared_lib_path}")
