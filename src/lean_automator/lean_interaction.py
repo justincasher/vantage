@@ -6,17 +6,12 @@ This module handles the validation of Lean code associated with Knowledge Base
 items (`KBItem`). It defines functions to:
 
 - Create temporary Lake environments for isolated verification builds.
-
-- Fetch recursive dependencies based on `plan_dependencies`.
-
 - Execute `lake build` commands asynchronously.
-
 - Update a persistent shared Lean library with successfully verified code.
-
 - Manage database status updates based on validation outcomes.
 
 Configuration relies on environment variables like `LEAN_AUTOMATOR_SHARED_LIB_PATH`
-for the location of the persistent shared library and optionally
+for the location of the persistent shared library's root directory and optionally
 `LEAN_AUTOMATOR_LAKE_CACHE` for caching.
 """
 
@@ -58,9 +53,16 @@ logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper(), format='%(
 logger = logging.getLogger(__name__)
 
 # --- Configuration for Persistent Shared Library ---
-# Example: /path/to/your/project/lean_proven_kb
+# Example: /path/to/your/project/vantage_lib (Root of the Lake project)
 SHARED_LIB_PATH_STR = os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH')
-SHARED_LIB_MODULE_NAME = os.getenv('LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME', 'ProvenKB') # e.g., the library name defined in the shared lakefile
+# The specific package/module name is now handled internally based on assumptions or reading config.
+
+# Hardcoded names based on previous discussion for vantage_lib example
+# The name of the package defined in the shared library's lakefile (.lean or .toml)
+SHARED_LIB_PACKAGE_NAME = "vantage_lib"
+# The name of the primary library target / source directory within that package
+SHARED_LIB_SRC_DIR_NAME = "VantageLib"
+
 
 if not SHARED_LIB_PATH_STR:
     logger.warning("LEAN_AUTOMATOR_SHARED_LIB_PATH environment variable not set. Persistent library features will likely fail.")
@@ -69,14 +71,14 @@ else:
     SHARED_LIB_PATH = pathlib.Path(SHARED_LIB_PATH_STR).resolve()
     if not SHARED_LIB_PATH.is_dir():
         logger.warning(f"Shared library path {SHARED_LIB_PATH} does not exist or is not a directory.")
-        # Optionally try to create it? For now, just warn.
-        # try:
-        #     SHARED_LIB_PATH.mkdir(parents=True, exist_ok=True)
-        #     logger.info(f"Created shared library directory: {SHARED_LIB_PATH}")
-        #     # Need to run `lake init <SHARED_LIB_MODULE_NAME>` here? Better to do manually.
-        # except OSError as e:
-        #     logger.error(f"Failed to create shared library directory {SHARED_LIB_PATH}: {e}")
-        #     SHARED_LIB_PATH = None
+        SHARED_LIB_PATH = None
+    else:
+        # Optional: Add check for lakefile.lean or lakefile.toml here?
+        if not (SHARED_LIB_PATH / "lakefile.lean").is_file() and not (SHARED_LIB_PATH / "lakefile.toml").is_file():
+             logger.warning(f"Shared library path {SHARED_LIB_PATH} does not appear to contain a lakefile.lean or lakefile.toml.")
+        # Optional: Add check for source directory?
+        # if not (SHARED_LIB_PATH / SHARED_LIB_SRC_DIR_NAME).is_dir():
+        #      logger.warning(f"Shared library source directory {SHARED_LIB_PATH / SHARED_LIB_SRC_DIR_NAME} not found.")
 
 
 # --- Helper Functions ---
@@ -110,7 +112,9 @@ def _generate_imports_for_target(item: KBItem) -> str:
 
     Creates standard `import Module.Name` lines for each dependency listed in
     `item.plan_dependencies`, excluding self-imports. Sorts the imports for
-    consistency.
+    consistency. It assumes the dependency names directly map to Lean modules within
+    the shared library structure (e.g., dep_name "MyDep.Helper" corresponds to
+    import `VantageLib.MyDep.Helper` if SHARED_LIB_SRC_DIR_NAME is `VantageLib`).
 
     Args:
         item (KBItem): The KBItem for which to generate imports.
@@ -123,11 +127,20 @@ def _generate_imports_for_target(item: KBItem) -> str:
         return "" # Return empty string if no item or no dependencies
 
     import_lines: List[str] = []
+    # NOTE: This assumes dependency names are relative to the shared library root module
+    # e.g., if dep_name is "Sub.Module", the import becomes "import VantageLib.Sub.Module"
+    # If dependency names are already fully qualified like "VantageLib.Sub.Module",
+    # this logic might need adjustment or the `plan_dependencies` need to be stored differently.
     for dep_name in item.plan_dependencies:
-        # Basic check to avoid self-imports, although Lean handles them gracefully
+        # Avoid self-imports
         if dep_name != item.unique_name:
-            # Generate standard import statements (no library prefix assumed here)
-            import_lines.append(f"import {dep_name}")
+            # Prepend the shared library source dir name if it's not already there
+            # This assumes unique_names don't already include the library prefix. Adjust if needed.
+            if not dep_name.startswith(SHARED_LIB_SRC_DIR_NAME + "."):
+                full_import_name = f"{SHARED_LIB_SRC_DIR_NAME}.{dep_name}"
+            else:
+                full_import_name = dep_name # Assume already fully qualified
+            import_lines.append(f"import {full_import_name}")
 
     if not import_lines:
         return "" # Return empty if only self-imports or empty list initially
@@ -138,77 +151,17 @@ def _generate_imports_for_target(item: KBItem) -> str:
     return "-- Auto-generated imports based on plan_dependencies --\n" + "\n".join(sorted_imports)
 
 
-def _fetch_recursive_dependencies(
-    unique_name: str,
-    db_path: Optional[str],
-    visited_names: Set[str],
-    fetched_items: Dict[str, KBItem]
-) -> None:
-    """Recursively fetches an item and its `plan_dependencies` from the database. (Internal Helper)
-
-    Populates the `Workspaceed_items` dictionary with KBItems retrieved from the
-    database, traversing the dependency graph defined by the `plan_dependencies`
-    field. Uses `visited_names` to detect cycles and avoid redundant fetches.
-
-    Args:
-        unique_name (str): The unique name of the starting KBItem to fetch.
-        db_path (Optional[str]): Path to the database file.
-        visited_names (Set[str]): A set to track visited item names during the
-            current traversal, preventing infinite loops in case of cycles. Modified in-place.
-        fetched_items (Dict[str, KBItem]): A dictionary where fetched KBItems
-            are stored, keyed by their unique names. Modified in-place.
-
-    Raises:
-        FileNotFoundError: If an item or one of its dependencies listed in
-            `plan_dependencies` cannot be found in the database.
-    """
-    # Base case: Already visited or fetched
-    if unique_name in visited_names:
-        if unique_name not in fetched_items:
-            # This indicates a cycle was detected before the item was fully fetched/added
-            logger.warning(f"Cycle detected involving '{unique_name}' or item visited but not fetched.")
-        return # Stop recursion
-
-    visited_names.add(unique_name) # Mark as visited
-
-    logger.debug(f"Fetching item and plan dependencies recursively for: {unique_name}")
-    item = get_kb_item_by_name(unique_name, db_path=db_path)
-    if item is None:
-        visited_names.remove(unique_name) # Backtrack visited status on failure
-        raise FileNotFoundError(f"Item '{unique_name}' not found in the database during dependency fetch.")
-
-    # Store successfully fetched item
-    fetched_items[unique_name] = item
-
-    logger.debug(f"Item '{unique_name}' plan_dependencies: {item.plan_dependencies}")
-    # Determine dependencies to fetch next
-    dependencies_to_fetch = item.plan_dependencies if item.plan_dependencies else []
-    for dep_name in dependencies_to_fetch:
-        if dep_name == unique_name: continue # Skip self-dependency
-
-        # Recursively fetch if not already fetched
-        if dep_name not in fetched_items:
-             if dep_name not in visited_names: # Check visited again before recursing
-                 try:
-                      _fetch_recursive_dependencies(dep_name, db_path, visited_names, fetched_items)
-                 except FileNotFoundError as e:
-                      # Log the error context and re-raise
-                      logger.error(f"Failed to fetch required sub-dependency '{dep_name}' needed by '{unique_name}'.")
-                      raise e # Propagate error up
-
-
 def _create_temp_env_for_verification(
     target_item: KBItem,
     temp_dir_base: str,
     shared_lib_path: pathlib.Path,
-    shared_lib_module_name: str,
     temp_lib_name: str = "TempVerifyLib"
 ) -> Tuple[str, str]:
     """Creates a temporary Lake project for isolated verification. (Internal Helper)
 
     Sets up a directory structure with a `lakefile.lean` that explicitly requires
-    the persistent shared library (`shared_lib_module_name`) located at
-    `shared_lib_path`. It then writes *only* the Lean source code (`lean_code`
+    the persistent shared library package (hardcoded as SHARED_LIB_PACKAGE_NAME)
+    located at `shared_lib_path`. It then writes *only* the Lean source code (`lean_code`
     prefixed with generated imports from `plan_dependencies`) of the `target_item`
     into the appropriate subdirectory within this temporary project.
 
@@ -216,9 +169,7 @@ def _create_temp_env_for_verification(
         target_item (KBItem): The item whose code needs verification.
         temp_dir_base (str): The base path of the temporary directory to use.
         shared_lib_path (pathlib.Path): The resolved path to the persistent
-            shared library directory.
-        shared_lib_module_name (str): The Lean module name of the shared library
-            (as used in `require`).
+            shared library directory (root of the Lake project).
         temp_lib_name (str): The name to use for the temporary Lean library
             within the temporary project (defaults to "TempVerifyLib").
 
@@ -229,16 +180,14 @@ def _create_temp_env_for_verification(
               project context (e.g., "TempVerifyLib.Target.Module.Name").
 
     Raises:
-        ValueError: If `shared_lib_path`, `shared_lib_module_name`, or
-            `target_item.lean_code` is invalid or missing, or if the target item's
-            `unique_name` cannot be converted to a valid path.
+        ValueError: If `shared_lib_path` or `target_item.lean_code` is invalid
+            or missing, or if the target item's `unique_name` cannot be converted
+            to a valid path.
         OSError: If file system operations (creating directories, writing files) fail.
         TypeError: If `target_item.lean_code` is not a string or string-convertible.
     """
     if not shared_lib_path or not shared_lib_path.is_dir():
-         raise ValueError(f"Shared library path '{shared_lib_path}' is invalid or not configured.")
-    if not shared_lib_module_name:
-         raise ValueError("Shared library module name is not configured.")
+            raise ValueError(f"Shared library path '{shared_lib_path}' is invalid or not configured.")
 
     temp_project_path = pathlib.Path(temp_dir_base)
     # Directory where source code for the temporary library will live
@@ -248,12 +197,14 @@ def _create_temp_env_for_verification(
     # Use resolved absolute path for the required library for robustness
     shared_lib_abs_path = str(shared_lib_path.resolve()).replace('\\', '/') # Normalize path separators
 
+    # Use the hardcoded SHARED_LIB_PACKAGE_NAME in the require statement
     lakefile_content = f"""
 import Lake
 open Lake DSL
 
 -- Require the persistent shared library using its absolute path
-require {shared_lib_module_name} from "{shared_lib_abs_path}"
+-- Using package name '{SHARED_LIB_PACKAGE_NAME}'
+require {SHARED_LIB_PACKAGE_NAME} from "{shared_lib_abs_path}"
 
 -- Define the temporary package
 package _{temp_lib_name.lower()}_project where
@@ -264,7 +215,7 @@ lean_lib {temp_lib_name} where
   -- library configuration options
 """
     lakefile_path = temp_project_path / "lakefile.lean"
-    logger.debug(f"Creating temporary lakefile requiring '{shared_lib_module_name}' from '{shared_lib_abs_path}': {lakefile_path}")
+    logger.debug(f"Creating temporary lakefile requiring '{SHARED_LIB_PACKAGE_NAME}' from '{shared_lib_abs_path}': {lakefile_path}")
     try:
         # Ensure parent directory exists and write the lakefile
         lakefile_path.parent.mkdir(parents=True, exist_ok=True)
@@ -278,6 +229,8 @@ lean_lib {temp_lib_name} where
 
     try:
         # Convert the item's unique name (e.g., "My.Target.Module") to a relative path ("My/Target/Module")
+        # This assumes unique_name does NOT contain the library root module prefix (e.g. "VantageLib.")
+        # If it does, _module_name_to_path might need adjustment or the name needs cleaning first.
         module_path_rel = _module_name_to_path(target_item.unique_name)
     except ValueError as e:
         logger.error(f"Invalid module name '{target_item.unique_name}' for target item. Cannot create file path.")
@@ -295,6 +248,7 @@ lean_lib {temp_lib_name} where
         raise OSError(f"Failed to create source directory '{lean_file_abs.parent}' for target item {target_item.unique_name}: {e}") from e
 
     # Generate standard import statements based on the item's plan_dependencies
+    # These imports should be fully qualified including the SHARED_LIB_SRC_DIR_NAME prefix
     import_block = _generate_imports_for_target(target_item)
     logger.debug(f"Generated imports for target {target_item.unique_name}:\n{import_block}")
 
@@ -318,6 +272,7 @@ lean_lib {temp_lib_name} where
          raise RuntimeError(f"Unexpected error writing lean_code for target {target_item.unique_name} to {lean_file_abs}: {e}") from e
 
     # Construct the full module name required for the 'lake build' command in the temp env
+    # This assumes unique_name represents the path relative to the library root.
     full_target_module_name = f"{temp_lib_name}.{target_item.unique_name}"
 
     return str(temp_project_path.resolve()), full_target_module_name
@@ -326,7 +281,6 @@ lean_lib {temp_lib_name} where
 async def _update_persistent_library(
     item: KBItem,
     shared_lib_path: pathlib.Path,
-    shared_lib_module_name: str,
     lake_executable_path: str,
     timeout_seconds: int,
     loop: asyncio.AbstractEventLoop
@@ -335,14 +289,15 @@ async def _update_persistent_library(
 
     Takes a successfully verified KBItem, writes its source code (including any
     necessary imports derived from `plan_dependencies`) to the correct location
-    within the persistent shared library file structure (`shared_lib_path`), and
-    then executes `lake build <item.unique_name>` within that library's directory
+    within the persistent shared library file structure (`shared_lib_path`), using
+    the hardcoded SHARED_LIB_SRC_DIR_NAME for the source directory. It then
+    executes `lake build <item.unique_name>` within that library's directory
     to integrate the new/updated item.
 
     Args:
         item (KBItem): The verified KBItem containing the `lean_code`.
-        shared_lib_path (pathlib.Path): The path to the persistent shared library project.
-        shared_lib_module_name (str): The name of the library module within the shared project.
+        shared_lib_path (pathlib.Path): The path to the root of the persistent
+            shared library Lake project.
         lake_executable_path (str): Path to the `lake` executable.
         timeout_seconds (int): Timeout duration for the `lake build` command.
         loop (asyncio.AbstractEventLoop): The running asyncio event loop.
@@ -351,8 +306,6 @@ async def _update_persistent_library(
         bool: True if the source file was written and the subsequent `lake build`
         command in the persistent library succeeded (exit code 0). False otherwise
         (e.g., file system errors, invalid module name, build failure, timeout).
-        Note: A return value of False does *not* necessarily mean the initial
-        verification failed, only that adding it to the persistent library failed.
     """
     if not shared_lib_path or not shared_lib_path.is_dir():
          logger.error(f"Cannot update persistent library: Path '{shared_lib_path}' is invalid.")
@@ -361,16 +314,17 @@ async def _update_persistent_library(
          logger.error(f"Cannot update persistent library: Item '{item.unique_name if item else 'None'}' has no lean_code.")
          return False
 
-    logger.info(f"Updating persistent library '{shared_lib_module_name}' at {shared_lib_path} with item '{item.unique_name}'.")
+    logger.info(f"Updating persistent library '{SHARED_LIB_SRC_DIR_NAME}' at {shared_lib_path} with item '{item.unique_name}'.")
 
     # 1. Determine destination path for the .lean source file within the shared library
     try:
         # Convert item unique name to relative path (e.g., "My.Module" -> Path("My/Module"))
+        # Assumes unique_name does not include the library prefix.
         module_path_rel = _module_name_to_path(item.unique_name)
         lean_file_rel = module_path_rel.with_suffix('.lean')
-        # Destination path is relative to the shared library's *module* source root
-        # Example: /path/to/shared/ProvenKB/My/Module.lean
-        dest_file_abs = shared_lib_path / shared_lib_module_name / lean_file_rel
+        # Destination path is relative to the shared library's *source directory* (hardcoded name)
+        # Example: /path/to/shared/VantageLib/My/Module.lean
+        dest_file_abs = shared_lib_path / SHARED_LIB_SRC_DIR_NAME / lean_file_rel
         logger.debug(f"Destination path in persistent library: {dest_file_abs}")
     except ValueError as e:
         logger.error(f"Invalid module name '{item.unique_name}'. Cannot determine persistent path: {e}")
@@ -381,7 +335,7 @@ async def _update_persistent_library(
         # Ensure parent directory exists (run sync os.makedirs in executor)
         await loop.run_in_executor(None, functools.partial(os.makedirs, dest_file_abs.parent, exist_ok=True))
 
-        # Generate imports based on plan_dependencies (same logic as for temp env)
+        # Generate imports based on plan_dependencies (these should be fully qualified)
         import_block = _generate_imports_for_target(item)
         separator = "\n\n" if import_block and item.lean_code else ""
         lean_code_str = str(item.lean_code) # Ensure string type
@@ -402,7 +356,8 @@ async def _update_persistent_library(
 
     # 3. Trigger 'lake build' within the persistent library directory
     # We build the specific module that was just added/updated.
-    target_build_name = item.unique_name # The full name identifies the module to build
+    # The target name needs to be fully qualified relative to the package root.
+    target_build_name = f"{SHARED_LIB_SRC_DIR_NAME}.{item.unique_name}"
 
     command = [lake_executable_path, 'build', target_build_name]
     logger.info(f"Triggering persistent library build: {' '.join(command)} in {shared_lib_path}")
@@ -411,20 +366,31 @@ async def _update_persistent_library(
     try:
         # Prepare arguments for subprocess.run
         run_args = {
-             'args': command,
-             'capture_output': True, 'text': True, # Capture stdout/stderr as text
-             'timeout': timeout_seconds,
-             'encoding': 'utf-8', 'errors': 'replace', # Handle potential encoding errors
-             'cwd': str(shared_lib_path), # IMPORTANT: Run IN the shared library directory
-             'check': False, # We'll check the return code manually
-             'env': os.environ.copy() # Inherit environment, may need LEAN_PATH adjustments if complex deps
+            'args': command,
+            'capture_output': True, 'text': True, # Capture stdout/stderr as text
+            'timeout': timeout_seconds,
+            'encoding': 'utf-8', 'errors': 'replace', # Handle potential encoding errors
+            'cwd': str(shared_lib_path), # IMPORTANT: Run IN the shared library directory
+            'check': False, # We'll check the return code manually
+            'env': os.environ.copy() # Inherit environment, may need LEAN_PATH adjustments if complex deps
         }
+
+        # Logging before the subprocess call
+        logger.info(f"Persistent build command: {' '.join(command)}")
+        logger.info(f"Persistent build CWD: {shared_lib_path}")
+        # Optional: log environment details if needed
+        # logger.debug(f"Persistent build env: {run_args.get('env')}")
+
         # Run the potentially blocking subprocess in an executor thread
         lake_process_result = await loop.run_in_executor(None, functools.partial(subprocess.run, **run_args))
 
+        # Logging after the subprocess call (unconditionally) 
         stdout_output = lake_process_result.stdout or ""
         stderr_output = lake_process_result.stderr or ""
         log_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}"
+        # Log details always for debugging, maybe use INFO level temporarily
+        logger.info(f"Persistent build return code: {lake_process_result.returncode}")
+        logger.info(f"Persistent build full output:\n{log_output}")
 
         if lake_process_result.returncode == 0:
             logger.info(f"Persistent library build successful for target '{target_build_name}'.")
@@ -463,12 +429,14 @@ async def check_and_compile_item(
     1.  **Temporary Verification:** Creates an isolated temporary Lake project.
         This project contains only the target item's source code (with generated
         imports) and a `lakefile.lean` that requires the persistent shared
-        library (specified by `LEAN_AUTOMATOR_SHARED_LIB_PATH`). It runs
-        `lake build` within this temporary environment.
+        library package (identified by SHARED_LIB_PACKAGE_NAME) using its path
+        (LEAN_AUTOMATOR_SHARED_LIB_PATH). It runs `lake build` within this
+        temporary environment.
     2.  **Persistent Update:** If the temporary verification succeeds (build completes
         with exit code 0), the function writes the item's source code to the
-        *persistent* shared library directory and runs `lake build` within *that*
-        directory to integrate the new item.
+        correct directory within the persistent shared library (using
+        SHARED_LIB_SRC_DIR_NAME) and runs `lake build` within the root of *that*
+        library project to integrate the new item.
 
     Updates the `KBItem` status in the database to `PROVEN` upon successful
     verification and persistent update, `LEAN_VALIDATION_FAILED` if the temporary
@@ -476,6 +444,7 @@ async def check_and_compile_item(
 
     Args:
         unique_name (str): The unique name of the KBItem to check and compile.
+            Assumed to be relative to the library root (e.g., "MyModule.MySub").
         db_path (Optional[str]): Path to the knowledge base database file. Uses
             `DEFAULT_DB_PATH` if None.
         lake_executable_path (str): The path to the `lake` command-line tool.
@@ -504,7 +473,7 @@ async def check_and_compile_item(
          msg = "Shared library path (LEAN_AUTOMATOR_SHARED_LIB_PATH) not configured correctly or directory does not exist."
          logger.error(msg)
          return False, msg
-    logger.debug(f"Using shared library: {SHARED_LIB_PATH} (Module: {SHARED_LIB_MODULE_NAME})")
+    logger.debug(f"Using shared library path: {SHARED_LIB_PATH}")
 
     # --- Fetch Target Item ---
     try:
@@ -516,7 +485,6 @@ async def check_and_compile_item(
         if not hasattr(target_item, 'lean_code') or not target_item.lean_code:
              msg = f"Target item '{unique_name}' has no lean_code to compile."
              logger.error(msg)
-             # Attempt to update status to ERROR, but failure is primarily due to missing code
              try:
                  target_item.update_status(ItemStatus.ERROR, "Missing lean_code for compilation.")
                  await save_kb_item(target_item, client=None, db_path=effective_db_path)
@@ -526,7 +494,6 @@ async def check_and_compile_item(
 
     except Exception as e:
         logger.exception(f"Unexpected error fetching target item {unique_name}: {e}")
-        # Attempt to update status if item object exists
         if target_item and isinstance(target_item, KBItem):
             try:
                 target_item.update_status(ItemStatus.ERROR, f"Unexpected fetch error: {e}")
@@ -535,7 +502,7 @@ async def check_and_compile_item(
         return False, f"Unexpected error fetching target: {e}"
 
     # --- Create Temporary Environment ---
-    temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None # Initialize
+    temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None
     temp_project_path_str : Optional[str] = None
     target_temp_module_name : Optional[str] = None
     temp_lib_name_used = "TempVerifyLib"
@@ -544,27 +511,26 @@ async def check_and_compile_item(
         temp_dir_obj = tempfile.TemporaryDirectory()
         temp_dir_base = temp_dir_obj.name
         logger.info(f"Creating temporary verification environment in: {temp_dir_base}")
-        # Call helper to create the temp Lake project structure and files
+        # Pass the hardcoded package name determined earlier
         temp_project_path_str, target_temp_module_name = _create_temp_env_for_verification(
-             target_item, temp_dir_base, SHARED_LIB_PATH, SHARED_LIB_MODULE_NAME, temp_lib_name_used
+             target_item, temp_dir_base, SHARED_LIB_PATH,
+             temp_lib_name_used
         )
         logger.info(f"Temporary Lake project created at: {temp_project_path_str}")
         logger.info(f"Target module name for temporary build: {target_temp_module_name}")
 
     except (ValueError, OSError, TypeError) as e:
-         # Catch specific errors expected during environment creation
          logger.error(f"Failed to create temporary verification environment for {unique_name}: {e}")
-         # Attempt to update item status to ERROR
          if target_item:
              try:
                  target_item.update_status(ItemStatus.ERROR, f"Verification env creation error: {str(e)[:500]}")
                  await save_kb_item(target_item, client=None, db_path=effective_db_path)
              except Exception as db_err: logger.error(f"Failed to update status after env creation error: {db_err}")
          if temp_dir_obj:
-             try: await loop.run_in_executor(None, temp_dir_obj.cleanup) # Ensure cleanup on failure
+             try: await loop.run_in_executor(None, temp_dir_obj.cleanup)
              except Exception: pass
          return False, f"Verification environment creation error: {e}"
-    except Exception as e: # Catch any other unexpected error during setup
+    except Exception as e:
         logger.exception(f"Unexpected error during verification environment setup for {unique_name}: {e}")
         if target_item:
             try:
@@ -572,18 +538,17 @@ async def check_and_compile_item(
                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
             except Exception as db_err: logger.error(f"Failed to update status after unexpected env setup error: {db_err}")
         if temp_dir_obj:
-            try: await loop.run_in_executor(None, temp_dir_obj.cleanup) # Ensure cleanup
+            try: await loop.run_in_executor(None, temp_dir_obj.cleanup)
             except Exception: pass
         return False, f"Unexpected setup error: {e}"
 
-    # Verify paths were created before proceeding
     if not temp_project_path_str or not target_temp_module_name:
         msg = "Internal error: Temporary environment setup failed to return valid paths."
         logger.error(f"{msg} for {unique_name}.")
         if target_item:
             try:
-                 target_item.update_status(ItemStatus.ERROR, msg)
-                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                target_item.update_status(ItemStatus.ERROR, msg)
+                await save_kb_item(target_item, client=None, db_path=effective_db_path)
             except Exception: pass
         if temp_dir_obj:
              try: await loop.run_in_executor(None, temp_dir_obj.cleanup)
@@ -592,9 +557,7 @@ async def check_and_compile_item(
 
     # --- Execute Lake Build (Temporary Verification) ---
     try:
-        # Prepare environment variables (LEAN_PATH, LAKE_HOME) for the subprocess
         subprocess_env = os.environ.copy()
-        # Logic to detect stdlib path and set LEAN_PATH
         std_lib_path = None
         lean_executable_path_obj = None
         try:
@@ -608,7 +571,6 @@ async def check_and_compile_item(
         if lean_exe == 'lean' and not shutil.which('lean'):
              logger.warning("Could not find 'lean' executable relative to lake or in PATH. Cannot detect stdlib path.")
         else:
-            # Try using 'lean --print-libdir'
             try:
                 logger.debug(f"Attempting stdlib detection using: {lean_exe} --print-libdir")
                 lean_path_proc = await loop.run_in_executor(None, functools.partial(
@@ -617,24 +579,23 @@ async def check_and_compile_item(
                 ))
                 path_candidate = lean_path_proc.stdout.strip()
                 if path_candidate and pathlib.Path(path_candidate).is_dir():
-                     std_lib_path = path_candidate
-                     logger.info(f"Detected Lean stdlib path: {std_lib_path}")
+                    std_lib_path = path_candidate
+                    logger.info(f"Detected Lean stdlib path: {std_lib_path}")
                 else:
-                     logger.warning(f"Command '{lean_exe} --print-libdir' did not return valid directory: '{path_candidate}'")
+                    logger.warning(f"Command '{lean_exe} --print-libdir' did not return valid directory: '{path_candidate}'")
             except Exception as e:
                 logger.warning(f"Failed to detect Lean stdlib path via '{lean_exe} --print-libdir': {e}")
 
-        # Fallback stdlib detection relative to toolchain
         if not std_lib_path and lean_executable_path_obj:
             try:
-                 toolchain_dir = lean_executable_path_obj.parent.parent # Assumes bin/../.. structure
-                 fallback_path = toolchain_dir / "lib" / "lean"
-                 if await loop.run_in_executor(None, fallback_path.is_dir):
-                     std_lib_path = str(fallback_path.resolve())
-                     logger.warning(f"Assuming stdlib path relative to toolchain: {std_lib_path}")
-            except Exception as fallback_e: logger.warning(f"Error during fallback stdlib detection: {fallback_e}")
+                toolchain_dir = lean_executable_path_obj.parent.parent
+                fallback_path = toolchain_dir / "lib" / "lean"
+                if await loop.run_in_executor(None, fallback_path.is_dir):
+                    std_lib_path = str(fallback_path.resolve())
+                    logger.warning(f"Assuming stdlib path relative to toolchain: {std_lib_path}")
+            except Exception as fallback_e:
+                logger.warning(f"Error during fallback stdlib detection: {fallback_e}")
 
-        # Set LEAN_PATH in subprocess environment
         if std_lib_path:
             existing_lean_path = subprocess_env.get('LEAN_PATH')
             separator = os.pathsep
@@ -643,19 +604,18 @@ async def check_and_compile_item(
         else:
             logger.warning("Stdlib path not found. LEAN_PATH will not include it. Build might fail if stdlib needed implicitly.")
 
-        # Set LAKE_HOME if environment variable is configured
         persistent_cache_path = os.getenv('LEAN_AUTOMATOR_LAKE_CACHE')
         if persistent_cache_path:
             persistent_cache_path_obj = pathlib.Path(persistent_cache_path).resolve()
-            try: # Ensure cache directory exists
+            try:
                 await loop.run_in_executor(None, functools.partial(os.makedirs, persistent_cache_path_obj, exist_ok=True))
                 subprocess_env['LAKE_HOME'] = str(persistent_cache_path_obj)
                 logger.info(f"Setting LAKE_HOME for subprocess: {persistent_cache_path_obj}")
-            except OSError as e: logger.error(f"Failed to create/use persistent Lake cache directory '{persistent_cache_path_obj}': {e}")
+            except OSError as e:
+                logger.error(f"Failed to create/use persistent Lake cache directory '{persistent_cache_path_obj}': {e}")
         else:
             logger.warning("LEAN_AUTOMATOR_LAKE_CACHE not set. Lake will use default caching.")
 
-        # --- Execute Lake Build in Temporary Environment ---
         command = [lake_executable_path, 'build', target_temp_module_name]
         lake_process_result: Optional[subprocess.CompletedProcess] = None
         full_output = ""
@@ -663,21 +623,21 @@ async def check_and_compile_item(
 
         try:
             run_args = {
-                 'args': command, 'capture_output': True, 'text': True,
-                 'timeout': timeout_seconds, 'encoding': 'utf-8', 'errors': 'replace',
-                 'cwd': temp_project_path_str, # Run in the temp project directory
-                 'check': False, # Manual check of return code
-                 'env': subprocess_env # Pass configured environment
+                'args': command, 'capture_output': True, 'text': True,
+                'timeout': timeout_seconds, 'encoding': 'utf-8', 'errors': 'replace',
+                'cwd': temp_project_path_str,
+                'check': False,
+                'env': subprocess_env
             }
-            # Run the subprocess in an executor thread
             lake_process_result = await loop.run_in_executor(None, functools.partial(subprocess.run, **run_args))
 
             stdout_output = lake_process_result.stdout or ""
             stderr_output = lake_process_result.stderr or ""
             logger.debug(f"Verification build return code: {lake_process_result.returncode}")
-            if stdout_output: logger.debug(f"Verification build stdout:\n{stdout_output}")
-            if stderr_output: logger.debug(f"Verification build stderr:\n{stderr_output}")
-            # Combine output for potential error message
+            if stdout_output:
+                 logger.debug(f"Verification build stdout:\n{stdout_output}")
+            if stderr_output:
+                 logger.debug(f"Verification build stderr:\n{stderr_output}")
             full_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}"
 
         except subprocess.TimeoutExpired:
@@ -690,10 +650,8 @@ async def check_and_compile_item(
         except FileNotFoundError:
              msg = f"Lake executable not found at '{lake_executable_path}'"
              logger.error(msg)
-             # No item status update needed here, it's an environment config issue
              return False, msg
         except Exception as e:
-            # Catch other potential subprocess errors
             msg = f"Subprocess execution error during verification build: {e}"
             logger.exception(f"Unexpected error running verification build subprocess for {unique_name}: {e}")
             if target_item:
@@ -701,8 +659,7 @@ async def check_and_compile_item(
                  await save_kb_item(target_item, client=None, db_path=effective_db_path)
             return False, msg
 
-        # --- Process Verification Results ---
-        if not lake_process_result: # Should not happen if try block completed
+        if not lake_process_result:
              error_msg = "Internal error: Lake process result missing after execution."
              logger.error(error_msg)
              if target_item:
@@ -711,72 +668,65 @@ async def check_and_compile_item(
              return False, error_msg
 
         if lake_process_result.returncode == 0:
-             # Verification successful! Update status and proceed to persistent update.
-             logger.info(f"Successfully verified {unique_name} in temporary environment.")
-             # Refresh item state before final update
-             target_item = get_kb_item_by_name(unique_name, db_path=effective_db_path)
-             if not target_item: # Check if item disappeared
-                  msg = f"Item {unique_name} disappeared from DB after successful verification."
-                  logger.error(msg)
-                  return False, msg # Cannot proceed
+            logger.info(f"Successfully verified {unique_name} in temporary environment.")
+            target_item = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+            if not target_item:
+                 msg = f"Item {unique_name} disappeared from DB after successful verification."
+                 logger.error(msg)
+                 return False, msg
 
-             target_item.update_status(ItemStatus.PROVEN, error_log=None) # Clear error log
-             await save_kb_item(target_item, client=None, db_path=effective_db_path)
-             logger.info(f"Database status updated to PROVEN for {unique_name}.")
+            target_item.update_status(ItemStatus.PROVEN, error_log=None)
+            await save_kb_item(target_item, client=None, db_path=effective_db_path)
+            logger.info(f"Database status updated to PROVEN for {unique_name}.")
 
-             # --- Update Persistent Library ---
-             persist_success = await _update_persistent_library(
-                 target_item, SHARED_LIB_PATH, SHARED_LIB_MODULE_NAME,
-                 lake_executable_path, timeout_seconds, loop
-             )
-             if persist_success:
-                 logger.info(f"Successfully updated persistent library with {unique_name}.")
-                 return True, f"Lean code verified. Status: {ItemStatus.PROVEN.name}. Persistent library updated."
-             else:
-                 # Persistent update failed (error logged in helper function)
-                 logger.warning(f"Verification succeeded for {unique_name}, BUT failed to update/build persistent library.")
-                 # Return True because verification passed, but include warning in message
-                 return True, f"Lean code verified. Status: {ItemStatus.PROVEN.name}. WARNING: Persistent library update failed (see logs)."
+            # Pass the hardcoded library src dir name determined earlier
+            persist_success = await _update_persistent_library(
+                target_item, SHARED_LIB_PATH,
+                lake_executable_path, timeout_seconds, loop
+            )
+            if persist_success:
+                logger.info(f"Successfully updated persistent library with {unique_name}.")
+                final_msg = f"Lean code verified. Status: {ItemStatus.PROVEN.name}. Persistent library updated."
+                return True, final_msg
+            else:
+                logger.warning(f"Verification succeeded for {unique_name}, BUT failed to update/build persistent library.")
+                final_msg = f"Lean code verified. Status: {ItemStatus.PROVEN.name}. WARNING: Persistent library update failed (see logs)."
+                return True, final_msg
 
         else: # Verification build failed (return code != 0)
             final_error_message = full_output.strip() if full_output.strip() else "Unknown Lake build error (no output captured)."
             exit_code = lake_process_result.returncode
             logger.warning(f"Lean verification failed for {unique_name}. Exit code: {exit_code}")
-            logger.debug(f"Captured output for failed verification build of {unique_name}:\n{final_error_message[:1000]}...") # Log snippet
+            logger.debug(f"Captured output for failed verification build of {unique_name}:\n{final_error_message[:1000]}...")
 
-            # Refresh item state before updating with failure info
             target_item = get_kb_item_by_name(unique_name, db_path=effective_db_path)
-            if not target_item: # Check if item disappeared
+            if not target_item:
                 msg = f"Item {unique_name} disappeared from DB after failed verification."
                 logger.error(msg)
-                return False, msg # Cannot update status
+                return False, msg
 
             target_item.update_status(ItemStatus.LEAN_VALIDATION_FAILED, error_log=final_error_message)
             target_item.increment_failure_count()
             await save_kb_item(target_item, client=None, db_path=effective_db_path)
             logger.info(f"Database status updated to LEAN_VALIDATION_FAILED for {unique_name}.")
-            return False, f"Lean validation failed (Exit code: {exit_code}). See logs or KBItem error log."
+            final_msg = f"Lean validation failed (Exit code: {exit_code}). See logs or KBItem error log."
+            return False, final_msg
 
-    # --- General Exception Handling for the whole validation process ---
     except Exception as e:
          logger.exception(f"Unhandled exception during check_and_compile for {unique_name}: {e}")
-         # Attempt to set status to ERROR if item exists and isn't already proven
          if target_item and isinstance(target_item, KBItem) and getattr(target_item, 'status', None) != ItemStatus.PROVEN:
               try:
-                  # Refresh item state before update
                   current_item_state = get_kb_item_by_name(unique_name, db_path=effective_db_path)
                   if current_item_state and current_item_state.status != ItemStatus.PROVEN:
-                     current_item_state.update_status(ItemStatus.ERROR, f"Unhandled exception: {str(e)[:500]}")
-                     await save_kb_item(current_item_state, client=None, db_path=effective_db_path)
-              except Exception as db_err: logger.error(f"Failed to update item status after unhandled exception: {db_err}")
+                      current_item_state.update_status(ItemStatus.ERROR, f"Unhandled exception: {str(e)[:500]}")
+                      await save_kb_item(current_item_state, client=None, db_path=effective_db_path)
+              except Exception as db_err:
+                  logger.error(f"Failed to update item status after unhandled exception: {db_err}")
          return False, f"Unhandled exception: {e}"
     finally:
-        # --- Cleanup Temporary Directory ---
         if temp_dir_obj:
             try:
-                # Use run_in_executor for potentially blocking I/O during cleanup
                 await loop.run_in_executor(None, temp_dir_obj.cleanup)
                 logger.debug(f"Successfully cleaned up temporary directory: {temp_dir_obj.name}")
             except Exception as cleanup_err:
-                # Log error but don't change overall success/failure status
-                logger.error(f"Error cleaning up temporary directory {temp_dir_obj.name}: {cleanup_err}")
+                 logger.error(f"Error cleaning up temporary directory {temp_dir_obj.name}: {cleanup_err}")
