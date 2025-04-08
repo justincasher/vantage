@@ -1,0 +1,37 @@
+# Default application configuration for Lean Automator
+# These values can be overridden by environment variables or .env file settings
+
+database:
+  # Default path for the knowledge base SQLite file
+  kb_db_path: knowledge_base.sqlite
+
+llm:
+  # Default Google Gemini model to use
+  default_gemini_model: gemini-2.0-flash
+  # Default maximum number of retries for Gemini API calls
+  gemini_max_retries: 5
+  # Default backoff factor for exponential backoff during retries
+  gemini_backoff_factor: 1.5
+
+embedding:
+  # Default model for text embeddings
+  default_embedding_model: text-embedding-004
+
+latex:
+  # Default maximum number of review cycles for LaTeX generation
+  max_review_cycles: 3
+
+lean_processing:
+  # Maximum attempts allowed for generating/validating a Lean statement.
+  statement_max_attempts: 2
+  # Maximum attempts allowed for generating/validating a Lean proof for a statement.
+  proof_max_attempts: 3
+
+lean_paths:
+  # The name of the package defined in the lakefile of the persistent shared library.
+  shared_lib_package_name: "vantage_lib"
+  # The name of the primary source directory within the shared library package.
+  shared_lib_src_dir_name: "VantageLib"
+
+# Note: LEAN_AUTOMATOR_SHARED_LIB_PATH is considered user-specific
+# and should be set in the local .env file. See .env.example.

@@ -4,17 +4,13 @@ This document provides examples demonstrating the core workflow of the Lean Auto
 
 **Prerequisites:**
 
-* Python environment with necessary libraries installed (`google-generativeai`, `numpy`, etc.).
-* Lean 4 and Lake installed.
-* Environment variables set:
-    * `GEMINI_API_KEY`: Your Google AI API key.
-    * `DEFAULT_GEMINI_MODEL`: e.g., `gemini-1.5-flash-latest`.
-    * `DEFAULT_EMBEDDING_MODEL`: e.g., `text-embedding-004` (will be prefixed with `models/`).
-    * `GEMINI_MODEL_COSTS`: JSON string with model costs per million units (optional, for cost tracking).
-    * `KB_DB_PATH`: Path to the SQLite database file (e.g., `knowledge_base.sqlite`). Defaults if not set.
-    * `LEAN_AUTOMATOR_SHARED_LIB_PATH`: Absolute path to your persistent shared Lean library directory.
-    * `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME`: The name of your shared Lean library module (e.g., `ProvenKB`).
-* The shared Lean library at `LEAN_AUTOMATOR_SHARED_LIB_PATH` should be initialized (`lake init <YourModuleName>`).
+* Python environment set up with dependencies installed as per the [Installation & Setup](../getting-started/index.md) guide.
+* Lean 4 and Lake installed correctly.
+* **Application configured:** Ensure you have followed the configuration steps outlined in the [Installation & Setup](../getting-started/index.md) and [Configuration](../getting-started/configuration.md) documents. This typically involves:
+    * Creating a `.env` file in the project root.
+    * Setting your `GEMINI_API_KEY` in the `.env` file.
+    * Setting the `LEAN_AUTOMATOR_SHARED_LIB_PATH` in the `.env` file to the absolute path of your initialized shared Lean library.
+* The shared Lean library (specified by `LEAN_AUTOMATOR_SHARED_LIB_PATH`) must be initialized (Steps 7-11 in the Installation guide).
 
 *(These examples assume async execution using `asyncio.run()`. Due to the asynchronous nature and potential subprocess usage (especially for Lean interaction), running these examples directly in a Python script or an interactive terminal like `ipython` is recommended over standard Jupyter Notebook environments.)*
 
@@ -22,28 +18,34 @@ This document provides examples demonstrating the core workflow of the Lean Auto
 
 ## 1. Initialization
 
-First, ensure the database schema exists and initialize the Gemini client.
+First, ensure the database schema exists and initialize the Gemini client. The configuration system will load defaults and apply any overrides from your `.env` file.
 
 ```python
 import asyncio
 from lean_automator import kb_storage, llm_call
-# Call load_dotenv() to load variables from the .env file
-from dotenv import load_dotenv; load_dotenv()
+# Call load_dotenv() to load variables from the .env file if you are using one
+# The config loader will automatically pick up environment variables regardless.
+from dotenv import load_dotenv
+load_dotenv() # Loads variables from .env into the environment
 
 # Initialize the database (creates tables if they don't exist)
-# Uses KB_DB_PATH env var or default 'knowledge_base.sqlite'
+# Uses the configured path (env var KB_DB_PATH or default from config.yml)
 print("Initializing database...")
-kb_storage.initialize_database()
+kb_storage.initialize_database() # Assumes this function uses the configured path
 print("Database initialized.")
 
 # Initialize the Gemini Client
-# Reads API key, model names, retry settings from environment variables
+# Reads API key, model names, retry settings etc. from the environment
+# (using values from .env or defaults from config.yml/model_costs.json via config loader)
 try:
     print("Initializing Gemini client...")
-    client = llm_call.GeminiClient()
+    client = llm_call.GeminiClient() # Assumes GeminiClient uses the config loader internally
     print("Gemini client initialized.")
-    print(f"Using Generation Model: {client.default_generation_model}")
-    print(f"Using Embedding Model: {client.default_embedding_model}")
+    # Accessing config might be different now, depending on GeminiClient implementation
+    # Check how config is exposed (e.g., via APP_CONFIG) if needed:
+    # from lean_automator.config_loader import APP_CONFIG
+    # print(f"Using Generation Model: {APP_CONFIG.llm.default_gemini_model}")
+    # print(f"Using Embedding Model: {APP_CONFIG.embedding.default_embedding_model}")
 except Exception as e:
     print(f"FATAL: Failed to initialize Gemini Client: {e}")
     # Cannot proceed without the client
@@ -76,7 +78,7 @@ async def add_definition():
         # save_kb_item is async and handles INSERT or UPDATE.
         # If description_nl or latex_statement changes and client is provided,
         # it can automatically trigger embedding generation.
-        saved_item = await save_kb_item(definition_item, client=client)
+        saved_item = await save_kb_item(definition_item, client=client) # Assumes client is initialized
         print(f"Item saved successfully with ID: {saved_item.id} and status: {saved_item.status.name}")
         # If description_nl was present, embedding_nl might now be populated (as bytes)
         print(f"Embedding NL present: {saved_item.embedding_nl is not None}")
@@ -114,7 +116,7 @@ async def add_theorem(dependency_name: str):
 
     print(f"Saving item '{theorem_item.unique_name}'...")
     try:
-        saved_item = await save_kb_item(theorem_item, client=client)
+        saved_item = await save_kb_item(theorem_item, client=client) # Assumes client is initialized
         print(f"Item saved successfully with ID: {saved_item.id} and status: {saved_item.status.name}")
         print(f"Plan dependencies: {saved_item.plan_dependencies}")
         print(f"Embedding NL present: {saved_item.embedding_nl is not None}")
@@ -151,14 +153,14 @@ async def process_latex(item_name: str):
     try:
         success = await latex_processor.generate_and_review_latex(
             unique_name=item_name,
-            client=client
-            # db_path=... # Optional override
+            client=client # Assumes client is initialized
+            # db_path=... # Optional override for DB path if needed
         )
 
         if success:
             print(f"LaTeX processing successful for {item_name}.")
             # Check the item status in DB - should be LATEX_ACCEPTED
-            item_after_latex = kb_storage.get_kb_item_by_name(item_name)
+            item_after_latex = kb_storage.get_kb_item_by_name(item_name) # Assumes uses configured DB path
             if item_after_latex:
                 print(f"New status: {item_after_latex.status.name}")
                 print(f"LaTeX Statement present: {item_after_latex.latex_statement is not None}")
@@ -169,7 +171,7 @@ async def process_latex(item_name: str):
         else:
             print(f"LaTeX processing failed for {item_name}. Check logs and DB status/feedback.")
             # Status might be LATEX_REJECTED_FINAL or ERROR
-            item_after_latex = kb_storage.get_kb_item_by_name(item_name)
+            item_after_latex = kb_storage.get_kb_item_by_name(item_name) # Assumes uses configured DB path
             if item_after_latex:
                  print(f"Final status: {item_after_latex.status.name}")
                  print(f"Review Feedback: {item_after_latex.latex_review_feedback}")
@@ -198,7 +200,7 @@ async def process_lean(item_name: str, previous_step_success: bool):
         return False
 
     # Fetch item to ensure it's in the correct state
-    item = kb_storage.get_kb_item_by_name(item_name)
+    item = kb_storage.get_kb_item_by_name(item_name) # Assumes uses configured DB path
     if not item or item.status != ItemStatus.LATEX_ACCEPTED:
         print(f"\nSkipping Lean processing for {item_name}. Expected LATEX_ACCEPTED status, found {item.status.name if item else 'MISSING'}.")
         return False
@@ -206,7 +208,7 @@ async def process_lean(item_name: str, previous_step_success: bool):
     print(f"\nProcessing Lean code for item '{item_name}'...")
     # This function involves LLM calls (statement gen, proof gen) and
     # calls lean_interaction.check_and_compile_item, which uses 'lake'
-    # and interacts with the persistent shared library.
+    # and interacts with the persistent shared library (using configured path).
     # Assumes the dependency ('MyProject.BasicDefs.ZeroIsNatural') has been
     # successfully processed to PROVEN status and exists in the shared library.
     # For this demo, we'll assume that happened somehow (e.g., manual addition or prior run).
@@ -217,14 +219,14 @@ async def process_lean(item_name: str, previous_step_success: bool):
 
         success = await lean_processor.generate_and_verify_lean(
             unique_name=item_name,
-            client=client
-            # db_path=..., # Optional override
-            # lake_executable_path=..., # Optional override
-            # timeout_seconds=... # Optional override
+            client=client # Assumes client is initialized
+            # db_path=..., # Optional override for DB path
+            # lake_executable_path=..., # Optional override for lake path
+            # timeout_seconds=... # Optional override for lean interaction timeout
         )
 
         # Check final status
-        item_after_lean = kb_storage.get_kb_item_by_name(item_name)
+        item_after_lean = kb_storage.get_kb_item_by_name(item_name) # Assumes uses configured DB path
         status_after = item_after_lean.status.name if item_after_lean else "MISSING"
 
         if success:
@@ -241,7 +243,7 @@ async def process_lean(item_name: str, previous_step_success: bool):
     except Exception as e:
         print(f"Error during Lean processing call: {e}")
         # Manually check DB status if needed
-        item_after_crash = kb_storage.get_kb_item_by_name(item_name)
+        item_after_crash = kb_storage.get_kb_item_by_name(item_name) # Assumes uses configured DB path
         status_after = item_after_crash.status.name if item_after_crash else "MISSING"
         print(f"Status after crash: {status_after}")
         return False
@@ -269,12 +271,13 @@ async def perform_search(query: str):
     try:
         # Search against the natural language description embeddings ('nl')
         # Alternatively, use 'latex' to search against latex_statement embeddings
+        # Assumes client is initialized and kb_search uses configured DB path
         similar_items = await kb_search.find_similar_items(
             query_text=query,
             search_field='nl', # 'nl' or 'latex'
-            client=client,
+            client=client, # Assumes client is initialized
             top_n=3
-            # db_path=... # Optional override
+            # db_path=... # Optional override for DB path
         )
 
         if similar_items:
@@ -309,6 +312,7 @@ async def generate_single_embedding():
     text_to_embed = "Cosine similarity measures the cosine of the angle between two non-zero vectors."
     task = "SEMANTIC_SIMILARITY" # Or RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT etc.
     try:
+        # Assumes client is initialized
         embeddings = await client.embed_content(
             contents=text_to_embed,
             task_type=task
@@ -328,24 +332,30 @@ asyncio.run(generate_single_embedding())
 
 ## 8. Retrieving Cost Summary
 
-Track estimated API costs using the cost tracker integrated into the `GeminiClient`.
+Track estimated API costs using the cost tracker integrated into the `GeminiClient` (assuming it's implemented this way and accessible).
 
 ```python
 # Continued from previous block...
 
 print("\nRetrieving API Cost Summary...")
 # The client's cost_tracker accumulates usage across all calls (generate, embed)
-summary = client.cost_tracker.get_summary()
+# Assumes client is initialized and has cost tracking integrated
+try:
+    # Accessing cost_tracker might depend on GeminiClient implementation
+    summary = client.cost_tracker.get_summary()
+    import json
+    print(json.dumps(summary, indent=2))
 
-import json
-print(json.dumps(summary, indent=2))
-
-# You can also get just the total
-total_cost = client.cost_tracker.get_total_cost()
-print(f"\nEstimated Total Cost: ${total_cost:.6f}")
+    # You can also get just the total
+    total_cost = client.cost_tracker.get_total_cost()
+    print(f"\nEstimated Total Cost: ${total_cost:.6f}")
+except AttributeError:
+    print("Cost tracking might not be implemented or accessible via client.cost_tracker.")
+except Exception as e:
+    print(f"Error retrieving cost summary: {e}")
 
 ```
 
 ---
 
-This concludes the basic usage examples, demonstrating the flow from item creation through LaTeX and Lean processing, leveraging LLMs and the Lean compiler, and utilizing semantic search capabilities.
+This concludes the basic usage examples, demonstrating the flow from item creation through LaTeX and Lean processing, leveraging LLMs and the Lean compiler, and utilizing semantic search capabilities, all based on the configured environment.

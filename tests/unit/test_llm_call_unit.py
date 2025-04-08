@@ -136,7 +136,7 @@ class MockGenAIResponse:
 
 def test_cost_tracker_init_valid_with_embedding():
     """Test initialization with valid cost JSON including embedding model."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON)
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON))
     assert "model-a" in tracker._model_costs
     assert "model-b" in tracker._model_costs
     assert MOCK_DEFAULT_EMBED_MODEL in tracker._model_costs
@@ -152,7 +152,7 @@ def test_cost_tracker_init_valid_with_embedding():
 
 def test_cost_tracker_init_valid_embed_explicit_zero():
     """Test initialization with explicit zero output cost for embedding model."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON_EMBED_EXPLICIT_ZERO)
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON_EMBED_EXPLICIT_ZERO))
     assert MOCK_DEFAULT_EMBED_MODEL in tracker._model_costs
     assert tracker._model_costs[MOCK_DEFAULT_EMBED_MODEL].input_cost_per_million_units == 0.1
     assert tracker._model_costs[MOCK_DEFAULT_EMBED_MODEL].output_cost_per_million_units == 0.0 # Explicitly 0.0
@@ -160,14 +160,15 @@ def test_cost_tracker_init_valid_embed_explicit_zero():
 
 def test_cost_tracker_init_invalid_json():
     """Test initialization with invalid JSON string, expects warning and empty costs."""
-    with pytest.warns(UserWarning, match="Failed to parse GEMINI_MODEL_COSTS"):
-        tracker = GeminiCostTracker(model_costs_json=INVALID_COST_JSON)
+    # Check for the specific warning about the format of the entry
+    with pytest.warns(UserWarning, match="Invalid cost format for model 'invalid_structure'"):
+        tracker = GeminiCostTracker(model_costs_override={"invalid_structure": 123})
     assert not tracker._model_costs # Expect empty costs dictionary
 
 def test_cost_tracker_init_incomplete_json():
     """Test initialization with valid JSON but incomplete/wrong data format per entry."""
     with pytest.warns(UserWarning) as record:
-        tracker = GeminiCostTracker(model_costs_json=INCOMPLETE_COST_JSON)
+        tracker = GeminiCostTracker(model_costs_override=json.loads(INCOMPLETE_COST_JSON))
 
     # Expect that entries with invalid format are skipped and warnings are issued.
     assert not tracker._model_costs # Expect empty cost dict if all entries fail validation
@@ -179,7 +180,7 @@ def test_cost_tracker_init_incomplete_json():
 
 def test_cost_tracker_record_usage_single_embed():
     """Test recording usage for a single embedding call (output units = 0)."""
-    tracker = GeminiCostTracker(model_costs_json='{}') # Costs not needed
+    tracker = GeminiCostTracker(model_costs_override={}) # Costs not needed
     tracker.record_usage(MOCK_DEFAULT_EMBED_MODEL, 500, 0) # Input units, 0 output units
     assert MOCK_DEFAULT_EMBED_MODEL in tracker._usage_stats
     stats = tracker._usage_stats[MOCK_DEFAULT_EMBED_MODEL]
@@ -190,7 +191,7 @@ def test_cost_tracker_record_usage_single_embed():
 
 def test_cost_tracker_record_usage_multiple():
     """Test recording usage accumulates correctly across multiple calls and models."""
-    tracker = GeminiCostTracker(model_costs_json='{}')
+    tracker = GeminiCostTracker(model_costs_override={})
     tracker.record_usage("model-a", 100, 200)
     tracker.record_usage(MOCK_DEFAULT_EMBED_MODEL, 50, 0) # Embedding call
     tracker.record_usage("model-a", 10, 20)
@@ -205,7 +206,7 @@ def test_cost_tracker_record_usage_multiple():
 
 def test_cost_tracker_get_total_cost_simple_embed():
     """Test calculating total cost for an embedding model."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON)
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON))
     tracker.record_usage(MOCK_DEFAULT_EMBED_MODEL, 10_000_000, 0) # 10M input units
 
     # Expected cost: (10M units / 1M) * $0.1 + (0 units / 1M) * $0.0 = $1.0
@@ -214,7 +215,7 @@ def test_cost_tracker_get_total_cost_simple_embed():
 
 def test_cost_tracker_get_total_cost_mixed_models_with_embed():
     """Test calculating total cost involving generation and embedding models."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON)
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON))
     tracker.record_usage("model-a", 500_000, 1_000_000)       # Gen: 0.5M in, 1M out
     tracker.record_usage(MOCK_DEFAULT_EMBED_MODEL, 2_000_000, 0) # Embed: 2M in, 0 out
 
@@ -225,7 +226,7 @@ def test_cost_tracker_get_total_cost_mixed_models_with_embed():
 
 def test_cost_tracker_get_total_cost_missing_model():
     """Test cost calculation warns and excludes costs for models without price info."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON) # Costs for A, B, embedding
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON)) # Costs for A, B, embedding
     tracker.record_usage("model-a", 1_000_000, 0) # Cost = 0.5
     tracker.record_usage("model-z", 500_000, 500_000) # No cost info
 
@@ -237,7 +238,7 @@ def test_cost_tracker_get_total_cost_missing_model():
 
 def test_cost_tracker_get_summary_with_embed():
     """Test the summary output format including an embedding model."""
-    tracker = GeminiCostTracker(model_costs_json=VALID_COST_JSON)
+    tracker = GeminiCostTracker(model_costs_override=json.loads(VALID_COST_JSON))
     tracker.record_usage("model-a", 500_000, 1_000_000)       # Gen
     tracker.record_usage(MOCK_DEFAULT_EMBED_MODEL, 1_000_000, 0) # Embed
     tracker.record_usage("model-z", 100_000, 100_000)       # No cost info
@@ -278,21 +279,33 @@ def test_cost_tracker_get_summary_with_embed():
 # --- Fixtures for GeminiClient Tests ---
 
 @pytest.fixture
-def mock_env_vars_base(mocker) -> Dict[str, str]:
+def mock_config_and_key(mocker):
     """
-    Provides base mock environment variables for client initialization.
-    Includes defaults for generation and embedding models.
+    Provides mock APP_CONFIG and get_gemini_api_key for client initialization.
+    Simulates configuration being loaded correctly for base tests.
     """
-    env_vars = {
-        'GEMINI_API_KEY': MOCK_API_KEY,
-        'DEFAULT_GEMINI_MODEL': MOCK_DEFAULT_GEN_MODEL,
-        'DEFAULT_EMBEDDING_MODEL': MOCK_DEFAULT_EMBED_MODEL, # Added
-        'GEMINI_MAX_RETRIES': '3',
-        'GEMINI_BACKOFF_FACTOR': '0.01',
-        'GEMINI_MODEL_COSTS': VALID_COST_JSON
+    # Mock the APP_CONFIG dictionary as it would be loaded
+    mock_config = {
+        'llm': {
+            'default_gemini_model': MOCK_DEFAULT_GEN_MODEL,
+            'gemini_max_retries': 3,
+            'gemini_backoff_factor': 0.01,
+        },
+        'embedding': {
+            'default_embedding_model': MOCK_DEFAULT_EMBED_MODEL,
+        },
+        'costs': json.loads(VALID_COST_JSON) # Use the parsed JSON for costs
+        # Add other potential config keys if needed by __init__
     }
-    mocker.patch('os.getenv', side_effect=lambda key, default=None: env_vars.get(key, default))
-    return env_vars
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', mock_config, create=True) # Use create=True if APP_CONFIG might not exist yet
+
+    # Mock the API key getter function
+    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value=MOCK_API_KEY)
+
+    # Return the mocked config for potential modification in specific tests if needed
+    # Return a copy to prevent tests modifying the same dict affecting each other
+    return mock_config.copy()
+
 
 # Enhanced mock_genai_lib fixture to also mock genai.embed_content
 @pytest.fixture
@@ -368,89 +381,112 @@ def patch_asyncio_to_thread(mocker):
 
 # -- Initialization Tests --
 
-def test_client_init_success(mocker, mock_env_vars_base, mock_genai_lib):
+def test_client_init_success(mocker, mock_config_and_key, mock_genai_lib): # Use new fixture
     """Test successful client initialization including embedding model."""
     mock_genai_module, _, _ = mock_genai_lib
 
+    # Client should load config from the mocked APP_CONFIG and get_gemini_api_key
     client = GeminiClient()
 
     assert client.api_key == MOCK_API_KEY
+    # This assertion should now pass as APP_CONFIG provides the mock model
     assert client.default_generation_model == MOCK_DEFAULT_GEN_MODEL
     assert client.default_embedding_model == MOCK_DEFAULT_EMBED_MODEL # Check embedding model
+    # Check retries/backoff came from mock_config_and_key's APP_CONFIG mock
     assert client.max_retries == 3
     assert client.backoff_factor == 0.01
     assert isinstance(client.cost_tracker, GeminiCostTracker)
-    assert client.cost_tracker._model_costs # Costs loaded
+    # Costs are now loaded via APP_CONFIG['costs']
+    assert "model-a" in client.cost_tracker._model_costs
+    assert MOCK_DEFAULT_EMBED_MODEL in client.cost_tracker._model_costs
 
     mock_genai_module.configure.assert_called_once_with(api_key=MOCK_API_KEY)
 
-def test_client_init_missing_api_key(mocker, mock_genai_lib):
+def test_client_init_missing_api_key(mocker, mock_genai_lib): # Doesn't need base config fixture
     """Test client initialization raises ValueError if GEMINI_API_KEY is missing."""
     _, _, _ = mock_genai_lib
-    mocker.patch('os.getenv', side_effect=lambda key, default='': None if key == 'GEMINI_API_KEY' else MOCK_DEFAULT_GEN_MODEL)
-    with pytest.raises(ValueError, match="API key is missing"):
+    # Mock the key getter to return None
+    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value=None)
+    # Mock APP_CONFIG to provide other values so only the key is missing
+    mock_config = {
+        'llm': {'default_gemini_model': MOCK_DEFAULT_GEN_MODEL, 'gemini_max_retries': 3, 'gemini_backoff_factor': 0.1},
+        'embedding': {'default_embedding_model': MOCK_DEFAULT_EMBED_MODEL},
+        'costs': {}
+    }
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', mock_config, create=True)
+
+    with pytest.raises(ValueError, match="Gemini API key is missing"):
         GeminiClient()
 
-def test_client_init_missing_default_gen_model(mocker, mock_genai_lib):
-    """Test client initialization raises ValueError if DEFAULT_GEMINI_MODEL is missing."""
+def test_client_init_missing_default_gen_model(mocker, mock_config_and_key, mock_genai_lib): # Use base mock
+    """Test client initialization raises ValueError if default_gemini_model is missing in APP_CONFIG."""
     _, _, _ = mock_genai_lib
-    mocker.patch('os.getenv', side_effect=lambda key, default='': MOCK_API_KEY if key == 'GEMINI_API_KEY' else (MOCK_DEFAULT_EMBED_MODEL if key == 'DEFAULT_EMBEDDING_MODEL' else None))
+    # Get the base mocked config and remove the key for this test
+    base_config = mock_config_and_key.copy() # Use copy
+    if 'llm' in base_config and 'default_gemini_model' in base_config['llm']:
+        del base_config['llm']['default_gemini_model']
+    # If 'llm' key itself is missing, that's fine too
+
+    # Re-patch APP_CONFIG with the modified version for this specific test
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    # Key getter is already mocked by the fixture
+
+    # This should now raise the error because the value isn't found in arg (None) or APP_CONFIG
     with pytest.raises(ValueError, match="Default Gemini generation model is missing"):
-        GeminiClient()
+        GeminiClient() # Call without providing the argument
 
-def test_client_init_missing_default_embed_model_uses_fallback(mocker, mock_genai_lib):
-    """Test client uses fallback embedding model if env var is missing."""
+
+def test_client_init_missing_default_embed_model_uses_fallback(mocker, mock_config_and_key, mock_genai_lib): # Use base mock
+    """Test client uses fallback embedding model if default_embedding_model is missing in APP_CONFIG."""
     _, _, _ = mock_genai_lib
-    # Simulate only embedding model env var missing
-    def mock_getenv_side_effect(key, default_passed_to_getenv=None): # Match os.getenv signature
-        # print(f"MOCK GETENV: key='{key}', default='{default_passed_to_getenv}'") # Add for debugging if needed
-        if key == 'GEMINI_API_KEY': return MOCK_API_KEY
-        if key == 'DEFAULT_GEMINI_MODEL': return MOCK_DEFAULT_GEN_MODEL
-        # Explicitly return None for DEFAULT_EMBEDDING_MODEL to test fallback
-        if key == 'DEFAULT_EMBEDDING_MODEL': return None
-        # Return valid values for others needed by init
-        if key == 'GEMINI_MODEL_COSTS': return VALID_COST_JSON # Ensure this returns the JSON string
-        if key == 'GEMINI_MAX_RETRIES': return str(FALLBACK_MAX_RETRIES)
-        if key == 'GEMINI_BACKOFF_FACTOR': return str(FALLBACK_BACKOFF_FACTOR)
-        # If none of the above matched, return the default that was originally passed to os.getenv
-        return default_passed_to_getenv
-    mocker.patch('os.getenv', side_effect=mock_getenv_side_effect)
+    # Get the base mocked config and remove the key for this test
+    base_config = mock_config_and_key.copy() # Use copy
+    if 'embedding' in base_config and 'default_embedding_model' in base_config['embedding']:
+        del base_config['embedding']['default_embedding_model']
+    # Re-patch APP_CONFIG with the modified version
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    # Key getter is already mocked
 
-    with pytest.warns(UserWarning, match=f"Using fallback: {FALLBACK_EMBEDDING_MODEL}"):
+    # Now, the __init__ should not find the model in arg (None) or APP_CONFIG
+    # It should hit the 'if not _emb_model_name:' block and issue the fallback warning
+    with pytest.warns(UserWarning, match=f"Default embedding model not set .* Using fallback: {FALLBACK_EMBEDDING_MODEL}"):
         client = GeminiClient()
 
     assert client.default_embedding_model == FALLBACK_EMBEDDING_MODEL
 
-def test_client_init_embed_model_adds_prefix(mocker, mock_genai_lib):
-    """Test client adds 'models/' prefix to embedding model if missing."""
+
+def test_client_init_embed_model_adds_prefix(mocker, mock_config_and_key, mock_genai_lib): # Use base mock
+    """Test client adds 'models/' prefix to embedding model if missing in APP_CONFIG."""
     _, _, _ = mock_genai_lib
     embed_model_no_prefix = "text-embedding-004"
     expected_model_with_prefix = f"models/{embed_model_no_prefix}"
-    mocker.patch('os.getenv', side_effect=lambda key, default='':
-                 MOCK_API_KEY if key == 'GEMINI_API_KEY' else
-                 (MOCK_DEFAULT_GEN_MODEL if key == 'DEFAULT_GEMINI_MODEL' else
-                  (embed_model_no_prefix if key == 'DEFAULT_EMBEDDING_MODEL' else # Return name without prefix
-                   VALID_COST_JSON if key == 'GEMINI_MODEL_COSTS' else # Keep other defaults
-                   '3' if key == 'GEMINI_MAX_RETRIES' else
-                   '0.01' if key == 'GEMINI_BACKOFF_FACTOR' else
-                   None)))
 
-    with pytest.warns(UserWarning, match=f"did not start with 'models/'. Using '{expected_model_with_prefix}'"):
+    # Modify the mocked config for this test case
+    base_config = mock_config_and_key.copy() # Use copy
+    base_config['embedding']['default_embedding_model'] = embed_model_no_prefix # Set value without prefix
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    # Key getter is already mocked
+
+    # Now __init__ should find the model name in APP_CONFIG, detect the missing prefix,
+    # add it, and issue the warning about resolution.
+    with pytest.warns(UserWarning, match=f"Resolved embedding model '{embed_model_no_prefix}' did not start with 'models/'. Using '{expected_model_with_prefix}'"):
         client = GeminiClient()
 
     assert client.default_embedding_model == expected_model_with_prefix
 
-def test_client_init_with_args(mocker, mock_genai_lib):
-    """Test initialization using direct arguments overrides environment variables."""
+def test_client_init_with_args(mocker, mock_genai_lib): # Doesn't need config fixture (args override)
+    """Test initialization using direct arguments overrides config/environment."""
     mock_genai_module, _, _ = mock_genai_lib
-    mocker.patch('os.getenv', return_value="DUMMY_ENV_VALUE") # Mock env vars returning dummy values
+    # Mock APP_CONFIG and key getter to return dummy values to ensure args are used
+    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value="DUMMY_KEY_FROM_GETTER")
+    mocker.patch('lean_automator.llm_call.APP_CONFIG', {'llm': {'default_gemini_model': 'dummy-gen-model-config'}}, create=True)
 
     custom_api_key = "ARG_API_KEY"
     custom_gen_model = "arg-gen-model"
     custom_embed_model = "models/arg-embed-model"
     custom_retries = 1
     custom_backoff = 5.0
-    custom_tracker = GeminiCostTracker(model_costs_json='{}')
+    custom_tracker = GeminiCostTracker(model_costs_override={})
 
     client = GeminiClient(
         api_key=custom_api_key,
@@ -470,32 +506,35 @@ def test_client_init_with_args(mocker, mock_genai_lib):
     mock_genai_module.configure.assert_called_once_with(api_key=custom_api_key)
 
 
-# -- Generate Method Tests (Keep Existing tests - they seem okay) --
-# test_client_generate_success_default_model, etc.
+# -- Generate Method Tests --
 
 @pytest.mark.asyncio
-async def test_client_generate_success_default_model(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_generate_success_default_model(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use new fixture
     """Test successful generation using the default model and verify cost tracking."""
     mock_genai_module, mock_model_instance, _ = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
+    # Client init should now use MOCK_DEFAULT_GEN_MODEL from mocked APP_CONFIG
     client = GeminiClient()
     prompt = "Test prompt"
     response_text = await client.generate(prompt)
 
     assert response_text == "Default Mock Response"
+    # This assertion should now pass
     mock_genai_module.GenerativeModel.assert_called_once_with(MOCK_DEFAULT_GEN_MODEL, system_instruction=None) # Check system prompt default
     mock_model_instance.generate_content.assert_called_once()
     _, call_kwargs = mock_model_instance.generate_content.call_args
     expected_contents = [{'role': 'user', 'parts': [prompt]}]
     assert call_kwargs['contents'] == expected_contents
 
+    # Check cost tracker call uses the correct default model name
     mock_record_usage.assert_called_once_with(client.cost_tracker, MOCK_DEFAULT_GEN_MODEL, 10, 20)
     mock_asyncio_sleep.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_client_generate_with_system_prompt(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_generate_with_system_prompt(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use new fixture
     """Test generation call passes system_prompt correctly."""
     mock_genai_module, mock_model_instance, _ = mock_genai_lib
+    # Client init should now use MOCK_DEFAULT_GEN_MODEL from mocked APP_CONFIG
     client = GeminiClient()
     prompt = "User query"
     system_p = "Act as a helpful assistant."
@@ -503,6 +542,7 @@ async def test_client_generate_with_system_prompt(mocker, mock_env_vars_base, mo
     await client.generate(prompt, system_prompt=system_p)
 
     # Verify GenerativeModel was initialized with the system_instruction
+    # This assertion should now pass
     mock_genai_module.GenerativeModel.assert_called_once_with(MOCK_DEFAULT_GEN_MODEL, system_instruction=system_p)
     # Verify generate_content was called (contents argument checked in other tests)
     mock_model_instance.generate_content.assert_called_once()
@@ -511,11 +551,12 @@ async def test_client_generate_with_system_prompt(mocker, mock_env_vars_base, mo
 # -- Embed Content Method Tests --
 
 @pytest.mark.asyncio
-async def test_client_embed_success_single_string(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_success_single_string(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test successful embedding for a single string input."""
     _, _, mock_embed_func = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
 
+    # Client init uses default from mocked APP_CONFIG
     client = GeminiClient()
     content_to_embed = "Embed this text."
     task_type = "RETRIEVAL_QUERY"
@@ -532,7 +573,7 @@ async def test_client_embed_success_single_string(mocker, mock_env_vars_base, mo
     assert len(result_embeddings) == 1
     assert result_embeddings[0] == expected_vector
 
-    # Verify genai.embed_content was called correctly
+    # Verify genai.embed_content was called correctly with the default model
     mock_embed_func.assert_called_once_with(
         model=MOCK_DEFAULT_EMBED_MODEL,
         content=content_to_embed,
@@ -551,7 +592,7 @@ async def test_client_embed_success_single_string(mocker, mock_env_vars_base, mo
 
 
 @pytest.mark.asyncio
-async def test_client_embed_success_list_strings(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_success_list_strings(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test successful embedding for a list of strings."""
     _, _, mock_embed_func = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
@@ -560,10 +601,9 @@ async def test_client_embed_success_list_strings(mocker, mock_env_vars_base, moc
     contents_to_embed = ["Embed text one.", "Embed text two."]
     task_type = "SEMANTIC_SIMILARITY"
 
-    # Configure mock response for list input
+    # Configure mock response for list input - assume key is 'embedding' containing a list
     expected_vectors = [[0.1, 0.2], [0.3, 0.4]]
-    # Assuming token count represents the sum for the batch
-    mock_embed_response = {'embeddings': expected_vectors, 'usage_metadata': {'total_token_count': 15}}
+    mock_embed_response = {'embedding': expected_vectors, 'usage_metadata': {'total_token_count': 15}}
     mock_embed_func.return_value = mock_embed_response
 
     result_embeddings = await client.embed_content(contents_to_embed, task_type)
@@ -573,7 +613,7 @@ async def test_client_embed_success_list_strings(mocker, mock_env_vars_base, moc
     assert len(result_embeddings) == 2
     assert result_embeddings == expected_vectors
 
-    # Verify genai.embed_content call
+    # Verify genai.embed_content call with default model
     mock_embed_func.assert_called_once_with(
         model=MOCK_DEFAULT_EMBED_MODEL,
         content=contents_to_embed,
@@ -586,7 +626,7 @@ async def test_client_embed_success_list_strings(mocker, mock_env_vars_base, moc
 
 
 @pytest.mark.asyncio
-async def test_client_embed_with_optional_args(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_with_optional_args(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test embedding call passes optional title and output_dimensionality."""
     _, _, mock_embed_func = mock_genai_lib
     client = GeminiClient()
@@ -600,7 +640,7 @@ async def test_client_embed_with_optional_args(mocker, mock_env_vars_base, mock_
 
     await client.embed_content(content, task, title=doc_title, output_dimensionality=dims)
 
-    # Verify optional args passed to genai.embed_content
+    # Verify optional args passed to genai.embed_content along with default model
     mock_embed_func.assert_called_once_with(
         model=MOCK_DEFAULT_EMBED_MODEL,
         content=content,
@@ -610,7 +650,7 @@ async def test_client_embed_with_optional_args(mocker, mock_env_vars_base, mock_
     )
 
 @pytest.mark.asyncio
-async def test_client_embed_title_wrong_task_warns(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_title_wrong_task_warns(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test providing title with incorrect task_type issues a warning."""
     _, _, mock_embed_func = mock_genai_lib
     mock_warnings = mocker.patch('warnings.warn')
@@ -619,10 +659,14 @@ async def test_client_embed_title_wrong_task_warns(mocker, mock_env_vars_base, m
     task = "RETRIEVAL_QUERY" # Not RETRIEVAL_DOCUMENT
     doc_title = "Should not be used"
 
+    # Mock response needed even though we check the call args and warning
+    mock_embed_func.return_value = {'embedding': [0.1], 'usage_metadata': {'total_token_count': 3}}
+
     await client.embed_content(content, task, title=doc_title)
 
     # Verify warning was issued
-    warning_messages = [call_args[0] for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
+    # Check all warnings, including potential ones from __init__ if mocks change
+    warning_messages = [str(call_args[0]) for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
     assert any("Ignoring 'title' argument as task_type is 'RETRIEVAL_QUERY'" in msg for msg in warning_messages)
 
     # Verify title was NOT passed to the underlying API call
@@ -634,32 +678,34 @@ async def test_client_embed_title_wrong_task_warns(mocker, mock_env_vars_base, m
     )
 
 @pytest.mark.asyncio
-async def test_client_embed_model_needs_prefix(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_model_needs_prefix(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test calling embed with a model name needing 'models/' prefix."""
     _, _, mock_embed_func = mock_genai_lib
     mock_warnings = mocker.patch('warnings.warn')
-    client = GeminiClient()
+    client = GeminiClient() # Initializes with default model, but we override in call
     content = "Text"
     task = "RETRIEVAL_QUERY"
-    model_no_prefix = "text-embedding-custom"
+    model_no_prefix = "text-embedding-custom" # Different from default
     expected_model_with_prefix = f"models/{model_no_prefix}"
 
-    await client.embed_content(content, task, model=model_no_prefix)
+    # Mock response
+    mock_embed_func.return_value = {'embedding': [0.9], 'usage_metadata': {'total_token_count': 1}}
 
-    # Verify warning was issued about the prefix
-    warning_messages = [call_args[0] for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
+    await client.embed_content(content, task, model=model_no_prefix) # Override model
+
+    # Verify warning was issued about the prefix based on the *called* model
+    warning_messages = [str(call_args[0]) for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
     assert any(f"Embedding model name '{model_no_prefix}' should ideally start with 'models/'" in msg for msg in warning_messages)
 
-    # Verify the API call used the name *without* the prefix (as per current implementation)
-    # If the code were changed to *add* the prefix in embed_content, this assertion would change.
+    # Verify the API call used the name *with* the prefix (as per current implementation which warns but still uses it)
     mock_embed_func.assert_called_once_with(
-        model=model_no_prefix, # Current code doesn't add prefix here, only in __init__
+        model=model_no_prefix, # The code currently warns but doesn't add prefix in embed_content itself
         content=content,
         task_type=task
     )
 
 @pytest.mark.asyncio
-async def test_client_embed_retry_logic(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_retry_logic(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test retry mechanism for embed_content."""
     _, _, mock_embed_func = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
@@ -667,7 +713,8 @@ async def test_client_embed_retry_logic(mocker, mock_env_vars_base, mock_genai_l
 
     max_retries = 1
     backoff = 0.01
-    client = GeminiClient(max_retries=max_retries, backoff_factor=backoff)
+    # Initialize client with custom retry settings
+    client = GeminiClient(max_retries=max_retries, backoff_factor=backoff) # Uses default models from mock_config_and_key
 
     expected_vector = [0.8, 0.9]
     mock_response_success = {'embedding': expected_vector, 'usage_metadata': {'total_token_count': 6}}
@@ -677,35 +724,36 @@ async def test_client_embed_retry_logic(mocker, mock_env_vars_base, mock_genai_l
 
     content = "Retry embed test"
     task = "RETRIEVAL_QUERY"
-    result = await client.embed_content(content, task)
+    result = await client.embed_content(content, task) # Uses default embedding model
 
     assert result == [expected_vector]
     assert mock_embed_func.call_count == 2 # Initial + 1 retry
     mock_asyncio_sleep.assert_called_once_with(pytest.approx(backoff * (2**0)))
+    # Check cost tracker called with default model name
     mock_record_usage.assert_called_once_with(client.cost_tracker, MOCK_DEFAULT_EMBED_MODEL, 6, 0)
 
     # Verify warnings
-    warning_messages = [call_args[0] for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
-    assert any("API Quota/Rate Limit Error for models/text-embedding-004 on attempt 1/2" in msg for msg in warning_messages)
-    assert any(f"Retrying API call for models/text-embedding-004 in {backoff * (2**0):.2f} seconds" in msg for msg in warning_messages)
+    warning_messages = [str(call_args[0]) for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
+    assert any(f"API Quota/Rate Limit Error for {MOCK_DEFAULT_EMBED_MODEL} on attempt 1/2" in msg for msg in warning_messages)
+    assert any(f"Retrying API call for {MOCK_DEFAULT_EMBED_MODEL} in {backoff * (2**0):.2f} seconds" in msg for msg in warning_messages)
 
 
 @pytest.mark.asyncio
-async def test_client_embed_all_retries_fail(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_all_retries_fail(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test embed_content raises exception after exhausting retries."""
     _, _, mock_embed_func = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
 
     max_retries = 2
     backoff = 0.01
-    client = GeminiClient(max_retries=max_retries, backoff_factor=backoff)
+    client = GeminiClient(max_retries=max_retries, backoff_factor=backoff) # Uses defaults
 
     simulated_error = Exception("Persistent Embed Error")
     mock_embed_func.side_effect = simulated_error
 
     content = "Failure embed test"
     task = "RETRIEVAL_QUERY"
-    # The final exception should be wrapped by the client's generic message
+    # The final exception should be wrapped by the client's generic message, mentioning the default model
     with pytest.raises(Exception, match=f"API call to embedding model '{MOCK_DEFAULT_EMBED_MODEL}' failed after retries or during processing.") as exc_info:
         await client.embed_content(content, task)
 
@@ -718,10 +766,10 @@ async def test_client_embed_all_retries_fail(mocker, mock_env_vars_base, mock_ge
     mock_record_usage.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_client_embed_invalid_response_format(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_invalid_response_format(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test embed_content raises ValueError for invalid API response."""
     _, _, mock_embed_func = mock_genai_lib
-    client = GeminiClient()
+    client = GeminiClient() # Uses defaults
 
     # Mock response missing 'embedding' or 'embeddings' keys
     mock_embed_func.return_value = {'wrong_key': [0.1]}
@@ -734,10 +782,10 @@ async def test_client_embed_invalid_response_format(mocker, mock_env_vars_base, 
 
 
 @pytest.mark.asyncio
-async def test_client_embed_input_type_validation(mocker, mock_env_vars_base, mock_genai_lib):
+async def test_client_embed_input_type_validation(mocker, mock_config_and_key, mock_genai_lib): # Use fixture
     """Test embed_content raises TypeError for invalid input types."""
     _, _, mock_embed_func = mock_genai_lib
-    client = GeminiClient()
+    client = GeminiClient() # Uses defaults
 
     with pytest.raises(TypeError, match="Input 'contents' must be a string or a list of strings"):
         await client.embed_content(123, "RETRIEVAL_QUERY") # Invalid type
@@ -749,12 +797,12 @@ async def test_client_embed_input_type_validation(mocker, mock_env_vars_base, mo
 
 
 @pytest.mark.asyncio
-async def test_client_embed_missing_usage_metadata(mocker, mock_env_vars_base, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread):
+async def test_client_embed_missing_usage_metadata(mocker, mock_config_and_key, mock_genai_lib, mock_asyncio_sleep, patch_asyncio_to_thread): # Use fixture
     """Test embed_content handles missing usage metadata gracefully."""
     _, _, mock_embed_func = mock_genai_lib
     mock_record_usage = mocker.spy(GeminiCostTracker, 'record_usage')
     mock_warnings = mocker.patch('warnings.warn')
-    client = GeminiClient()
+    client = GeminiClient() # Uses defaults
 
     # Mock response with valid embedding but no metadata
     expected_vector = [0.7, 0.8]
@@ -765,16 +813,11 @@ async def test_client_embed_missing_usage_metadata(mocker, mock_env_vars_base, m
 
     assert result == [expected_vector] # Result should still be correct
 
-    # Verify warning about missing metadata
-    warning_messages = [call_args[0] for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
-    assert any("Usage metadata not found in response" in msg for msg in warning_messages)
+    # Verify warning about missing metadata for the default model
+    warning_messages = [str(call_args[0]) for call_args, call_kwargs in mock_warnings.call_args_list if call_args]
+    assert any(f"Usage metadata not found in response for embedding model '{MOCK_DEFAULT_EMBED_MODEL}'" in msg for msg in warning_messages)
 
-    # Verify cost tracker was called but with 0 tokens since metadata was missing
-    # Note: The current implementation skips recording if metadata is absent, so assert_not_called
-    # If the implementation were changed to record 0, this assertion would change.
-    # Based on current code:
+    # Verify cost tracker was NOT called since metadata was missing
     mock_record_usage.assert_not_called()
-    # If recording 0 were desired, it would be:
-    # mock_record_usage.assert_called_once_with(client.cost_tracker, MOCK_DEFAULT_EMBED_MODEL, 0, 0)
 
     mock_asyncio_sleep.assert_not_called()

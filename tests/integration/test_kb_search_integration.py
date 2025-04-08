@@ -18,7 +18,7 @@ from typing import List, Tuple, Dict, Optional
 import logging 
 
 # Configure logger for this module
-logger = logging.getLogger(__name__) # <-- Added logger instance
+logger = logging.getLogger(__name__) 
 
 # Make sure pytest can find the src modules
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))

@@ -18,6 +18,12 @@ import re
 import logging
 from typing import Tuple, Set
 
+try:
+    from lean_automator.config_loader import APP_CONFIG
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    APP_CONFIG = {} # Provide an empty dict as a fallback
+
 logger = logging.getLogger(__name__)
 
 # Regex to find Lean error lines reporting "no goals to be solved" and capture line number

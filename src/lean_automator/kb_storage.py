@@ -25,6 +25,12 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any, Generator, Tuple
 
+try:
+    from lean_automator.config_loader import APP_CONFIG
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    APP_CONFIG = {} # Provide an empty dict as a fallback
+
 # Use absolute imports assuming 'src' is in the path or project is installed
 try:
     from lean_automator.llm_call import GeminiClient
@@ -40,7 +46,7 @@ logger = logging.getLogger(__name__)
 _sentinel = object()
 
 # --- Database Configuration ---
-DEFAULT_DB_PATH = os.getenv('KB_DB_PATH', 'knowledge_base.sqlite')
+DEFAULT_DB_PATH = APP_CONFIG.get('database', {}).get('kb_db_path', 'knowledge_base.sqlite')
 EMBEDDING_TASK_TYPE_DOCUMENT = "RETRIEVAL_DOCUMENT"
 EMBEDDING_DTYPE = np.float32
 

@@ -1,0 +1,10 @@
+{
+  "gemini-2.0-flash": {
+    "input": 0.1,
+    "output": 0.4
+  },
+  "models/text-embedding-004": {
+    "input": 0.0,
+    "output": 0.0
+  }
+}

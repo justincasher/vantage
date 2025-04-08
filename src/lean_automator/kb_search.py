@@ -14,6 +14,12 @@ import warnings
 from typing import List, Optional, Tuple
 
 try:
+    from lean_automator.config_loader import APP_CONFIG
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    APP_CONFIG = {} # Provide an empty dict as a fallback
+
+try:
     from lean_automator.llm_call import GeminiClient
 except ImportError:
     warnings.warn("llm_call.GeminiClient not found. Embedding generation/search will fail.", ImportWarning)
@@ -178,7 +184,8 @@ async def find_similar_items(
          return []
 
     embedding_column = f"embedding_{search_field}"
-    effective_db_path = db_path or DEFAULT_DB_PATH
+    config_db_path = APP_CONFIG.get('database', {}).get('kb_db_path')
+    effective_db_path = db_path or config_db_path or DEFAULT_DB_PATH
 
     # 1. Generate query embedding
     query_vector = await generate_embedding(query_text, task_type_query, client)

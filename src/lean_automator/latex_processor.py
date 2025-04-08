@@ -21,6 +21,12 @@ from typing import Optional, Tuple, List, Dict, Any
 
 # --- Imports from other project modules ---
 try:
+    from lean_automator.config_loader import APP_CONFIG
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    APP_CONFIG = {} # Provide an empty dict as a fallback
+
+try:
     # Need KBItem definition, DB access functions, Status Enum, ItemType
     from lean_automator.kb_storage import (
         KBItem,
@@ -42,14 +48,18 @@ logger = logging.getLogger(__name__)
 
 # --- Constants ---
 DEFAULT_MAX_REVIEW_CYCLES = 3
-try:
-    # Read from environment variable, fallback to default if not set or invalid
-    MAX_REVIEW_CYCLES = int(os.getenv('LATEX_MAX_REVIEW_CYCLES', DEFAULT_MAX_REVIEW_CYCLES))
-    if MAX_REVIEW_CYCLES < 0: # Ensure non-negative
-         logger.warning(f"LATEX_MAX_REVIEW_CYCLES cannot be negative. Using default {DEFAULT_MAX_REVIEW_CYCLES}.")
-         MAX_REVIEW_CYCLES = DEFAULT_MAX_REVIEW_CYCLES
-except (ValueError, TypeError):
-    logger.warning(f"Invalid value for LATEX_MAX_REVIEW_CYCLES environment variable. Using default {DEFAULT_MAX_REVIEW_CYCLES}.")
+
+# Get max review cycles from loaded configuration, falling back to default
+# Assumes APP_CONFIG['latex']['max_review_cycles'] is loaded as an int by config_loader
+# or provides the default if keys are missing.
+MAX_REVIEW_CYCLES = APP_CONFIG.get('latex', {}).get('max_review_cycles', DEFAULT_MAX_REVIEW_CYCLES)
+
+# Validate the value (ensure it's an int and non-negative)
+if not isinstance(MAX_REVIEW_CYCLES, int) or MAX_REVIEW_CYCLES < 0:
+    logger.warning(
+        f"Invalid or negative value found for config ['latex']['max_review_cycles'] ('{MAX_REVIEW_CYCLES}'). "
+        f"Using default {DEFAULT_MAX_REVIEW_CYCLES}."
+    )
     MAX_REVIEW_CYCLES = DEFAULT_MAX_REVIEW_CYCLES
 
 logger.info(f"Using MAX_REVIEW_CYCLES = {MAX_REVIEW_CYCLES}")
