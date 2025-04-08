@@ -2,11 +2,11 @@
 
 Follow these steps to get the Lean Automator project running.
 
-*The shared library initialization (Steps 5-10) only needs to be done once.* The `lean_processor` will automatically add new `.lean` files to the library's source directory (e.g., `vantage_lib/VantageLib/`) and trigger builds within the shared library directory later.
+*The shared library initialization (Steps 6-11) only needs to be done once.* The `lean_processor` will automatically add new `.lean` files to the library's source directory (e.g., `vantage_lib/VantageLib/`) and trigger builds within the shared library directory later.
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/justincasher/vantage.git
+    git clone [https://github.com/justincasher/vantage.git](https://github.com/justincasher/vantage.git)
     cd vantage # e.g., cd vantage
     ```
 
@@ -31,34 +31,19 @@ Follow these steps to get the Lean Automator project running.
     pip install -e .
     ```
 
-5.  **Set up Environment Variables:**
-    Create a `.env` file in the project root directory (e.g., `vantage/.env`). Add your API key and placeholders for library configuration initially. You will confirm the exact values in later steps.
-    ```dotenv
-    # Required:
-    GEMINI_API_KEY=YOUR_GEMINI_KEY_HERE
-    DEFAULT_GEMINI_MODEL=gemini-1.5-flash-latest # Or your preferred model
+5.  **Set up Environment Variables (`.env` file):**
+    * Copy the `.env.example` file (located in the project root) to a new file named `.env` in the same directory.
+        ```bash
+        cp .env.example .env
+        ```
+    * This `.env` file will hold your local configuration secrets and overrides, and **should *not* be committed to version control.**
+    * Edit the `.env` file:
+        * You **must** add your actual `GEMINI_API_KEY`.
+        * You will set the correct absolute path for `LEAN_AUTOMATOR_SHARED_LIB_PATH` in Step 12 after creating the shared library directory. Leave the placeholder for now or set it if you already know the final path.
+    * For detailed explanations of all required and optional environment variables, and how the configuration system works, please refer to the **[Configuration documentation](./configuration.md)**.
 
-    # --- Shared Library Configuration (Confirm values in steps below) ---
-    # Path (absolute recommended) to the directory created in Step 5
-    LEAN_AUTOMATOR_SHARED_LIB_PATH=/replace/with/absolute/path/to/vantage_lib
-    # The Lean library module name defined inside the shared library project (Step 7)
-    LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME=VantageLib # Default if using steps below
-
-    # Optional (Defaults shown):
-    # GEMINI_MODEL_COSTS='{"gemini-1.5-flash-latest": {"input": 0.35, "output": 0.70}}'
-    # KB_DB_PATH=knowledge_base.sqlite
-    # GEMINI_MAX_RETRIES=3
-    # GEMINI_BACKOFF_FACTOR=1.0
-    # LEAN_STATEMENT_MAX_ATTEMPTS=2
-    # LEAN_PROOF_MAX_ATTEMPTS=3
-    # LEAN_AUTOMATOR_LAKE_CACHE=.lake_cache # Optional: For external Lake deps cache
-    ```
-    * Replace `YOUR_GEMINI_KEY_HERE` with your actual key.
-    * You will set the correct **absolute path** for `LEAN_AUTOMATOR_SHARED_LIB_PATH` and confirm `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME` in Step 10.
-
-6. **Install LEAN 4 (Lake included)**
-    Follow the [official installation instruction](https://lean-lang.org/lean4/doc/quickstart.html). After installing LEAN 4 in your editor (VS Code default), you'll see a '∀' in your editor. Click '∀' and follow the instructions step by step. If you did everything correctly, the binaries of `lake` , `lean` and `elan` are under the directory `~/.elan/bin`. Add them to `PATH` if necessary. 
-
+6.  **Install Lean 4 (Lake included)**
+    Follow the [official installation instruction](https://lean-lang.org/lean4/doc/quickstart.html). After installing Lean 4 in your editor (VS Code default), you'll see a '∀' in your editor. Click '∀' and follow the instructions step by step. If you did everything correctly, the binaries of `lake` , `lean` and `elan` are under the directory `~/.elan/bin`. Add them to `PATH` if necessary.
 
 7.  **Create Shared Library Directory:**
     This directory will hold the Lake project for your persistent Lean library. Create it and navigate into it from your project root (e.g., `vantage/`).
@@ -79,31 +64,31 @@ Follow these steps to get the Lean Automator project running.
 9.  **Configure Shared Library (`lakefile.toml`):**
     Manually edit the generated `lakefile.toml` to configure the project as *library-only*.
     * Open `lakefile.toml`.
-    * Find the library definition section (e.g., `[[lean_lib]]`). Ensure the `name` attribute matches your desired module name (e.g., `name = "VantageLib"`). **Keep this section.** This name *must* match the `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME` environment variable.
+    * Find the library definition section (e.g., `[[lean_lib]]`). Ensure the `name` attribute matches your desired module name (e.g., `name = "VantageLib"`). **Keep this section.** This name *must* match the `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME` environment variable if you choose to set it (see Configuration docs).
     * Find the executable definition section (e.g., `[[lean_exe]]`). **Delete this entire section** (usually 3 lines).
     * *(Optional but Recommended)* Find the `defaultTargets = [...]` line near the top and **delete it** to avoid potential build issues.
     * Save the changes to `lakefile.toml`.
 
-10.  **Clean Up Shared Library Files:**
+10. **Clean Up Shared Library Files:**
     Delete the unnecessary files generated by the default `lake init` associated with the executable or placeholders. Run these commands while still inside the shared library directory (e.g., `vantage_lib/`).
     ```bash
     # Remove executable entry point and potential library root file:
     rm -f Main.lean VantageLib.lean
 
     # Remove default placeholder inside the library source directory:
-    # (Replace VantageLib if you configured a different library name in Step 7)
+    # (Replace VantageLib if you configured a different library name in Step 9)
     rm -f VantageLib/Basic.lean
 
     # Optional: remove default readme:
     rm -f README.md
     ```
 
-11.  **Optional: Build Check Shared Library:**
+11. **Optional: Build Check Shared Library:**
     Verify the Lake configuration by running a build command. This ensures the `lakefile.toml` and directory structure are valid. Run this while still inside the shared library directory (e.g., `vantage_lib/`).
     ```bash
     lake build
     ```
-    *Note: If this fails with `error: package 'vantage_lib' has no target 'vantage_lib'`, double-check that you deleted the `defaultTargets = ["vantage_lib"]` line from your `lakefile.toml` in Step 7.* A successful command indicates the setup is correct so far.
+    *Note: If this fails with `error: package 'vantage_lib' has no target 'vantage_lib'`, double-check that you deleted the `defaultTargets = [...]` line from your `lakefile.toml` in Step 9.* A successful command indicates the setup is correct so far.
 
 12. **Finalize Setup:**
     Navigate back to the project root directory and ensure your environment variables are correctly set.
@@ -111,6 +96,7 @@ Follow these steps to get the Lean Automator project running.
     # Navigate back to the project root (e.g., vantage/)
     cd ..
     ```
-    * **CRITICAL:** Now, update your `.env` file (from Step 4) or export the environment variables:
+    * **CRITICAL:** Now, update your `.env` file (from Step 5):
         * Set `LEAN_AUTOMATOR_SHARED_LIB_PATH` to the **absolute path** of the shared library directory you created (e.g., the output of `pwd` when you were inside `vantage_lib`).
-        * Confirm `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME` matches the library name you configured in Step 7 (e.g., `VantageLib`).
+        * Confirm `LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME` in your `.env` file (if you set it) matches the library name you configured in Step 9 (e.g., `VantageLib`). Refer to the [Configuration documentation](./configuration.md) if needed.
+

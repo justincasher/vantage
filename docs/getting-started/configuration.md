@@ -1,108 +1,102 @@
 # Configuration
 
-The application uses environment variables, typically loaded from a `.env` file in the project root directory using a library like `python-dotenv`.
+This application utilizes a layered configuration system to manage settings, separating defaults, secrets, and local overrides.
 
-## Required Variables
+## Configuration Layers
 
-These variables must be set for the application to function correctly.
+1.  **Default Configuration (`config.yml`):** Contains standard application settings and defaults. This file is version-controlled.
+2.  **Model Cost Data (`model_costs.json`):** Stores structured data for API cost estimation. This file is version-controlled.
+3.  **Environment Variables (`.env` file):** Used for secrets (like API keys), user-specific paths, and overriding default settings. This file is loaded into the environment, typically using a local `.env` file in the project root. **The `.env` file should *not* be committed to version control.**
+
+Settings are loaded in the order above, with environment variables taking precedence and overriding values from `config.yml` or `model_costs.json`.
+
+## The `.env` File and `.env.example`
+
+You will need to create a `.env` file in the project root directory to provide required secrets and paths, and optionally override default configurations.
+
+The `.env.example` file in the repository serves as a **template and provides examples** of commonly used environment variables. It shows the required format but may not list every single configuration key that *could* potentially be overridden.
+
+**[Link to `.env.example` in repository - *to be added after merge*]**
+
+Copy `.env.example` to `.env` and populate it with your specific values.
+
+## Environment Variable Details
+
+These are the key environment variables recognized by the application, typically set in your `.env` file.
+
+### Required Variables
+
+These **must** be defined in your `.env` file for the application to function.
 
 * **`GEMINI_API_KEY`**
-    * **Description:** Your API key for Google AI (Gemini). Obtain one from [Google AI Studio](https://aistudio.google.com/).
-    * **Example Value:** `YOUR_API_KEY_HERE` *(Do not commit your actual key to version control)*
-
-* **`DEFAULT_GEMINI_MODEL`**
-    * **Description:** The default Google Gemini model name to use for generation tasks.
-    * **Example Value:** `gemini-1.5-flash-latest` or `gemini-2.0-flash`
+    * **Description:** Your API key for Google AI (Gemini).
+    * **How to Obtain:** Get one from [Google AI Studio](https://aistudio.google.com/).
+    * **Example Value:** `AIzaSy...` *(Keep your actual key secure and private)*
 
 * **`LEAN_AUTOMATOR_SHARED_LIB_PATH`**
-    * **Description:** The path (absolute path recommended) to the directory containing the persistent shared Lean library project (e.g., `vantage_lib`). This *must* match the directory created and configured during the [Installation & Setup](../getting-started/index.md).
-    * **Example Value:** `/path/to/your/project/vantage_lib`
+    * **Description:** The **absolute path** to the directory containing the persistent shared Lean library project (e.g., `vantage_lib`). This path is specific to your local machine.
+    * **How to Obtain:** This directory is created during the [Installation & Setup](../getting-started/index.md). Use the full path identified in Step 12 of the setup guide.
+    * **Example Value:** `/Users/yourname/projects/vantage/vantage_lib`
 
-## Optional Variables
+### Optional Variables (Overrides)
 
-These variables have default values or are only needed for specific features. You can override them in your `.env` file.
+These variables can be added to your `.env` file to override the default settings loaded from `config.yml` or `model_costs.json`.
 
-* **`LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME`**
-    * **Description:** The Lean module name of the shared library, as defined in its `lakefile.toml` (e.g., `name = "VantageLib"`). Should match the configuration in the setup guide.
-    * **Default:** `VantageLib` *(Note: This should match the `name` configured in the shared library's `lakefile.toml` during setup)*
+* **`DEFAULT_GEMINI_MODEL`**
+    * **Description:** Overrides the default Google Gemini model name used for generation tasks.
+    * **Default From:** `config.yml` (`llm.default_gemini_model`)
+    * **Example Value:** `gemini-1.5-pro-latest`
 
 * **`DEFAULT_EMBEDDING_MODEL`**
-    * **Description:** The model used for generating vector embeddings for knowledge base items (used for similarity search). Required if using embedding features.
-    * **Example Value:** `text-embedding-004`
+    * **Description:** Overrides the default model used for generating vector embeddings.
+    * **Default From:** `config.yml` (`embedding.default_embedding_model`)
+    * **Example Value:** `text-embedding-preview-0409`
 
 * **`KB_DB_PATH`**
-    * **Description:** Path and filename for the SQLite database storing the knowledge base.
-    * **Default:** `knowledge_base.sqlite`
+    * **Description:** Overrides the default path and filename for the SQLite knowledge base database.
+    * **Default From:** `config.yml` (`database.kb_db_path`)
+    * **Example Value:** `./data/my_project_kb.sqlite`
+
+* **`LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME`**
+    * **Description:** Specifies the Lean module name of the shared library, as defined in its `lakefile.toml` (e.g., `name = "MyLeanLib"`). Only needed if you deviate from the name used during setup.
+    * **Default Logic:** The application might derive a default or expect a common name (e.g., based on the directory name or a hardcoded default like `VantageLib` if not set - check `config_loader.py` or setup guide recommendations).
+    * **Example Value:** `MyCustomLeanLib`
 
 * **`GEMINI_MODEL_COSTS`**
-    * **Description:** JSON string defining the estimated cost per million units (e.g., tokens) for input and output for specific models. Used for cost tracking. Verify units and costs on the model provider's pricing page.
-    * **Default:** `{}`
-    * **Example Format:** `'{"model-name": {"input": cost_input, "output": cost_output}}'`
+    * **Description:** Overrides the default model cost data loaded from `model_costs.json`. Provide a JSON string defining estimated costs per million units (verify units/costs with Google's pricing).
+    * **Default From:** `model_costs.json`
+    * **Example Format:** `'{"gemini-1.5-flash-latest": {"input": 0.35, "output": 0.70}, "models/text-embedding-004": {"input": 0.02, "output": 0.02}}'`
 
 * **`GEMINI_MAX_RETRIES`**
-    * **Description:** Maximum number of times to retry a failed API call to the Gemini model.
-    * **Default:** `3`
+    * **Description:** Overrides the maximum number of times to retry a failed API call to the Gemini model.
+    * **Default From:** `config.yml` (`llm.gemini_max_retries`)
+    * **Example Value:** `5`
 
 * **`GEMINI_BACKOFF_FACTOR`**
-    * **Description:** Factor determining the delay between retries (exponential backoff). A factor of 1.0 means delays of 1s, 2s, 4s, etc.
-    * **Default:** `1.0`
-
-* **`LEAN_STATEMENT_MAX_ATTEMPTS`**
-    * **Description:** Maximum attempts the system will make to generate a valid Lean statement using the LLM (if applicable to the workflow).
-    * **Default:** `2`
-
-* **`LEAN_PROOF_MAX_ATTEMPTS`**
-    * **Description:** Maximum attempts the system will make to generate a valid Lean proof using the LLM (if applicable to the workflow).
-    * **Default:** `3`
+    * **Description:** Overrides the factor determining the delay between retries (exponential backoff).
+    * **Default From:** `config.yml` (`llm.gemini_backoff_factor`)
+    * **Example Value:** `2.0`
 
 * **`LATEX_MAX_REVIEW_CYCLES`**
-    * **Description:** Maximum number of review cycles involving the LLM for generating or validating LaTeX output (if applicable to the workflow).
-    * **Example Value:** `3` *(No hard default specified, depends on implementation)*
+    * **Description:** Overrides the maximum number of LLM review cycles for LaTeX generation/validation.
+    * **Default From:** `config.yml` (`latex.max_review_cycles`)
+    * **Example Value:** `2`
+
+* **`LEAN_STATEMENT_MAX_ATTEMPTS`**
+    * **Description:** Overrides the maximum attempts to generate a valid Lean statement using the LLM.
+    * **Default Logic:** Likely defined within the `lean_processor` module or potentially added to `config.yml`. Check implementation for default behavior.
+    * **Example Value:** `3`
+
+* **`LEAN_PROOF_MAX_ATTEMPTS`**
+    * **Description:** Overrides the maximum attempts to generate a valid Lean proof using the LLM.
+    * **Default Logic:** Likely defined within the `lean_processor` module or potentially added to `config.yml`. Check implementation for default behavior.
+    * **Example Value:** `4`
 
 * **`LEAN_AUTOMATOR_LAKE_CACHE`**
-    * **Description:** Optional path to a directory for caching external Lake dependencies, potentially speeding up builds if the shared library uses external Lean libraries.
-    * **Default:** Not set (Lake uses its own default cache location).
-    * **Example Value:** `.lake_cache`
+    * **Description:** Specifies a path for caching external Lake dependencies. Can speed up builds if the shared library uses external Lean libraries.
+    * **Default Logic:** If not set, Lake uses its own default cache location.
+    * **Example Value:** `/path/to/shared/.lake_cache`
 
-## Example `.env` File
+---
 
-Here is an example `.env` file structure incorporating some common settings and overrides, based on the variables described above. **Remember to replace placeholders with your actual values and keep sensitive information private.**
-
-```dotenv
-# Environment variables for the Lean Automator project
-
-# --- Database ---
-# KB_DB_PATH=knowledge_base.sqlite # Using default
-
-# --- LLM Configuration (Google Gemini) ---
-# IMPORTANT: Keep your API key secure! Do not commit it.
-GEMINI_API_KEY=YOUR_API_KEY_HERE
-DEFAULT_GEMINI_MODEL=gemini-2.0-flash
-
-# --- Vector Embedding Configuration ---
-# Required if using embedding/search features
-DEFAULT_EMBEDDING_MODEL=text-embedding-004
-
-# --- Lean/Lake Configuration ---
-# Use the absolute path to your shared library directory
-LEAN_AUTOMATOR_SHARED_LIB_PATH=/path/to/your/project/vantage_lib
-# Ensure this matches the 'name' in vantage_lib/lakefile.toml
-LEAN_AUTOMATOR_SHARED_LIB_MODULE_NAME=VantageLib
-
-# --- Cost Tracking ---
-# Format: '{"model-name": {"input": cost_per_million_input_units, "output": cost_per_million_output_units}}'
-# Costs are examples, verify current pricing. Units might be tokens/chars.
-GEMINI_MODEL_COSTS='{"gemini-2.0-flash": {"input": 0.1, "output": 0.4}, "models/text-embedding-004": {"input": 0.0, "output": 0.0}}'
-
-# --- LLM Retry/Backoff Overrides (Optional) ---
-GEMINI_MAX_RETRIES=5
-GEMINI_BACKOFF_FACTOR=1.5
-
-# --- LaTeX Generation (Optional) ---
-LATEX_MAX_REVIEW_CYCLES=3
-
-# --- Other Optional Settings ---
-# LEAN_STATEMENT_MAX_ATTEMPTS=2 # Using default
-# LEAN_PROOF_MAX_ATTEMPTS=3 # Using default
-# LEAN_AUTOMATOR_LAKE_CACHE=.lake_cache # Using default Lake cache
-```
+Always ensure your `.env` file contains the required variables and any overrides you need for your specific setup. Remember to keep secrets secure and avoid committing your `.env` file.
