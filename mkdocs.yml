@@ -45,6 +45,7 @@ nav:
     - 'Usage': 'getting-started/usage.md'
   - 'API Reference': 
     - 'Overview': 'reference/index.md' 
+    - 'Configuration Loader': 'reference/config_loader.py'
     - 'KB Search': 'reference/kb_search.md' 
     - 'KB Storage': 'reference/kb_storage.md'
     - 'LaTeX Processor': 'reference/latex_processor.md'
