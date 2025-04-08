@@ -16,12 +16,25 @@ import pytest
 import asyncio
 import json
 import warnings # Added to check for warnings
-from dotenv import load_dotenv; load_dotenv() # Load environment variables from .env file if present
+import warnings
 from typing import Tuple, List, Dict, Any
 
 # Make sure pytest can find the src modules
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+
+# config_loader imports with fallback
+try:
+    # Import both the config dictionary and the specific API key getter
+    from lean_automator.config_loader import APP_CONFIG, get_gemini_api_key
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
+    # Provide fallbacks if the config loader isn't available
+    APP_CONFIG = {}
+    # Define a fallback getter if the real one isn't imported
+    def get_gemini_api_key() -> Optional[str]:
+         """Fallback: Retrieves API key directly from environment."""
+         return os.getenv('GEMINI_API_KEY')
 
 # Use absolute imports
 from lean_automator.llm_call import (
@@ -71,7 +84,7 @@ def api_key() -> str:
     Returns:
         str: The Gemini API key.
     """
-    key = os.getenv('GEMINI_API_KEY')
+    key = get_gemini_api_key()
     if not key:
         pytest.skip("GEMINI_API_KEY environment variable not set. Skipping integration tests.")
     # Also skip if essential Google libraries failed to import
@@ -85,6 +98,9 @@ def model_costs_json() -> str:
 
     Reads from the `GEMINI_MODEL_COSTS` environment variable, falling back to
     `DEFAULT_TEST_COSTS` if the environment variable is not set.
+    Note: This uses a dedicated env var for testing cost scenarios, rather
+    than relying on the main APP_CONFIG['costs'] loaded from model_costs.json,
+    to allow for easier test-specific cost injection.
 
     Returns:
         str: The JSON string containing model cost information.
@@ -104,7 +120,8 @@ def cost_tracker(model_costs_json: str) -> GeminiCostTracker:
     Returns:
         GeminiCostTracker: A fresh instance for tracking API call costs.
     """
-    return GeminiCostTracker(model_costs_json=model_costs_json)
+    costs_dict = json.loads(model_costs_json)
+    return GeminiCostTracker(model_costs_override=costs_dict)
 
 @pytest.fixture
 def client(api_key: str, cost_tracker: GeminiCostTracker) -> GeminiClient:

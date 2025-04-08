@@ -8,8 +8,10 @@ import shutil
 import time
 import asyncio
 import subprocess
+import warnings
 from unittest.mock import AsyncMock, MagicMock, call # Keep mocks if needed for specific tests
 
+# --- Project-Specific Imports ---
 # Adjust path to import from src
 # (Assuming project structure allows this)
 try:
@@ -28,10 +30,21 @@ except ImportError as e:
     print(f"Error importing modules: {e}", file=sys.stderr)
     raise
 
+# --- Add Config Loader Imports ---
+try:
+    from lean_automator.config_loader import APP_CONFIG, get_lean_automator_shared_lib_path
+except ImportError:
+    warnings.warn("config_loader not found. Tests might use fallback config.", ImportWarning)
+    APP_CONFIG = {} # Provide fallback empty config
+    def get_lean_automator_shared_lib_path() -> Optional[str]:
+        # Fallback directly to environment variable if config loader is missing
+        return os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH')
+
 # --- Configuration ---
 LAKE_EXEC_PATH = os.environ.get('LAKE_EXECUTABLE', 'lake')
 # This should match the hardcoded value in lean_interaction.py
-SHARED_LIB_SRC_DIR = "VantageLib"
+lean_paths_config = APP_CONFIG.get('lean_paths', {})
+SHARED_LIB_SRC_DIR: str = lean_paths_config.get('shared_lib_src_dir_name', 'VantageLib') # Default if not in config
 CACHE_ENV_VAR = 'LEAN_AUTOMATOR_LAKE_CACHE' # Environment variable name
 
 def is_lake_available(lake_exec=LAKE_EXEC_PATH):
@@ -307,7 +320,7 @@ async def test_compile_success_dep_built_by_lake(test_db, monkeypatch):
 
     # Manually place the dependency's source code in the expected shared library location
     # using the hardcoded source directory name
-    shared_lib_path_str = os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH')
+    shared_lib_path_str = get_lean_automator_shared_lib_path()
     if shared_lib_path_str:
         shared_lib_path = pathlib.Path(shared_lib_path_str).resolve()
         dep_rel_path = pathlib.Path(*dep_name.split('.')).with_suffix('.lean')
