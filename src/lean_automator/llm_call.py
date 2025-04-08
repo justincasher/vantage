@@ -22,6 +22,18 @@ import google.generativeai as genai
 from google.generativeai import types as genai_types
 from google.api_core import exceptions as google_api_exceptions # For specific API errors
 
+try:
+    # Import both the config dictionary and the specific API key getter
+    from lean_automator.config_loader import APP_CONFIG, get_gemini_api_key
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
+    # Provide fallbacks if the config loader isn't available
+    APP_CONFIG = {}
+    # Define a fallback getter if the real one isn't imported
+    def get_gemini_api_key() -> Optional[str]:
+         """Fallback: Retrieves API key directly from environment."""
+         return os.getenv('GEMINI_API_KEY')
+
 # These can serve as hardcoded fallbacks if environment variables AND arguments are missing/invalid
 FALLBACK_MAX_RETRIES = 3
 FALLBACK_BACKOFF_FACTOR = 1.0
@@ -81,40 +93,43 @@ class GeminiCostTracker:
         _model_costs (Dict[str, ModelCostInfo]): A dictionary mapping model
             names to their cost information (per million units).
     """
-    def __init__(self, model_costs_json: Optional[str] = None):
+    def __init__(self, model_costs_override: Optional[Dict[str, Any]] = None):
         """Initializes the GeminiCostTracker.
 
-        Loads model cost information from the provided JSON string or the
-        `GEMINI_MODEL_COSTS` environment variable. Initializes internal
+        Loads model cost information primarily from APP_CONFIG['costs']. An
+        optional override dictionary can be provided. Initializes internal
         dictionaries to store usage and cost data.
 
         Args:
-            model_costs_json (Optional[str]): A JSON string mapping model names
-                (e.g., "gemini-1.5-flash-latest", "models/text-embedding-004")
-                to their costs per million units. Expected format:
+            model_costs_override (Optional[Dict[str, Any]]): A dictionary
+                mapping model names (e.g., "gemini-1.5-flash-latest") to
+                their costs per million units, in the format
                 `{"model_name": {"input": float, "output": float}, ...}`.
-                The "output" key is optional and defaults to 0.0 if missing
-                (common for embedding models). If None, attempts to read from
-                the `GEMINI_MODEL_COSTS` environment variable. Defaults to an
-                empty dictionary if neither is provided or valid.
+                This overrides costs loaded from APP_CONFIG.
         """
-        effective_costs_json = model_costs_json if model_costs_json is not None else os.getenv('GEMINI_MODEL_COSTS', FALLBACK_MODEL_COSTS_JSON)
+        # Prioritize override, then APP_CONFIG, then empty dict
+        effective_costs_dict = model_costs_override if model_costs_override is not None \
+                               else APP_CONFIG.get('costs', {}) # Get costs dict from APP_CONFIG
         self._usage_stats: Dict[str, ModelUsageStats] = {}
         self._model_costs: Dict[str, ModelCostInfo] = {}
-        self._parse_model_costs(effective_costs_json)
+        self._parse_model_costs(effective_costs_dict) # Pass the dictionary directly
 
-    def _parse_model_costs(self, json_string: str):
-        """Parses the model costs JSON string.
+    def _parse_model_costs(self, costs_dict: Dict[str, Any]):
+        """Parses the model costs dictionary.
 
-        Populates the `_model_costs` dictionary with ModelCostInfo objects.
-        Handles potential JSON decoding errors and invalid formats gracefully,
-        issuing warnings. Assumes costs are provided per million units.
+        Populates the `_model_costs` dictionary with ModelCostInfo objects
+        from the provided dictionary (typically from APP_CONFIG['costs']).
+        Handles potential invalid formats gracefully, issuing warnings.
+        Assumes costs are provided per million units.
 
         Args:
-            json_string (str): The JSON string containing model cost data.
+            costs_dict (Dict[str, Any]): The dictionary containing model cost data.
         """
+        if not isinstance(costs_dict, dict):
+            warnings.warn(f"Invalid format for costs data: Expected dict, got {type(costs_dict)}. Costs will not be tracked.")
+            return
         try:
-            costs_dict = json.loads(json_string)
+            # Iterate directly over the dictionary provided
             for model, costs in costs_dict.items():
                 # Allow 'output' to be missing or 0 for embedding models
                 if isinstance(costs, dict) and 'input' in costs:
@@ -126,11 +141,12 @@ class GeminiCostTracker:
                         output_cost_per_million_units=output_cost
                     )
                 else:
-                    warnings.warn(f"Invalid cost format for model '{model}' in GEMINI_MODEL_COSTS. Expected at least {{'input': float}}. Found: {costs}")
-        except json.JSONDecodeError:
-            warnings.warn("Failed to parse GEMINI_MODEL_COSTS JSON string. Costs will not be tracked accurately.")
+                    warnings.warn(f"Invalid cost format for model '{model}' in costs data. Expected at least {{'input': float}}. Found: {costs}")
+        # No JSONDecodeError needed, but catch other potential issues
+        except (TypeError, ValueError) as e:
+            warnings.warn(f"Error processing cost data entry: {e}. Check cost configuration format.")
         except Exception as e:
-            warnings.warn(f"Error processing GEMINI_MODEL_COSTS: {e}")
+            warnings.warn(f"Unexpected error processing costs data: {e}")
 
     def record_usage(self, model: str, input_units: int, output_units: int):
         """Records usage statistics for a specific model after a successful API call.
@@ -295,49 +311,59 @@ class GeminiClient:
              raise RuntimeError("google.generativeai package is required but not found.")
 
         # --- Configuration Loading ---
-        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        self.api_key = api_key or get_gemini_api_key()
         if not self.api_key:
-             raise ValueError("Gemini API key is missing. Set via argument or GEMINI_API_KEY environment variable.")
+             raise ValueError("Gemini API key is missing. Set via argument, GEMINI_API_KEY environment variable, or config loader.")
 
-        self.default_generation_model = default_generation_model or os.getenv('DEFAULT_GEMINI_MODEL')
+        # Get from arg, then APP_CONFIG['llm']['default_gemini_model'], then check
+        _config_gen_model = APP_CONFIG.get('llm', {}).get('default_gemini_model')
+        self.default_generation_model = default_generation_model or _config_gen_model
         if not self.default_generation_model:
-             raise ValueError("Default Gemini generation model is missing. Set via argument or DEFAULT_GEMINI_MODEL environment variable.")
+            raise ValueError("Default Gemini generation model is missing. Set via argument, DEFAULT_GEMINI_MODEL env var (via config loader), or config file.")
 
-        _emb_model_name = default_embedding_model or os.getenv('DEFAULT_EMBEDDING_MODEL')
+        # Get from arg, then APP_CONFIG['embedding']['default_embedding_model'], then fallback constant
+        _config_emb_model = APP_CONFIG.get('embedding', {}).get('default_embedding_model')
+        _emb_model_name = default_embedding_model or _config_emb_model
+
         if not _emb_model_name:
-             warnings.warn(f"Default embedding model not set via argument or DEFAULT_EMBEDDING_MODEL env var. Using fallback: {FALLBACK_EMBEDDING_MODEL}")
+             warnings.warn(f"Default embedding model not set via argument or config/env. Using fallback: {FALLBACK_EMBEDDING_MODEL}")
              self.default_embedding_model = FALLBACK_EMBEDDING_MODEL
         else:
              # Ensure the model name starts with 'models/' for consistency if it doesn't already
-             # This helps align with cost dictionary keys like "models/text-embedding-004"
              if not _emb_model_name.startswith('models/'):
                  self.default_embedding_model = f'models/{_emb_model_name}'
-                 warnings.warn(f"DEFAULT_EMBEDDING_MODEL '{_emb_model_name}' did not start with 'models/'. Using '{self.default_embedding_model}' for consistency.")
+                 warnings.warn(f"Resolved embedding model '{_emb_model_name}' did not start with 'models/'. Using '{self.default_embedding_model}' for consistency.")
              else:
                   self.default_embedding_model = _emb_model_name
 
         # Max Retries
-        if max_retries is not None:
-            self.max_retries = max_retries
+        # Get from arg, then APP_CONFIG['llm']['gemini_max_retries'], then fallback constant
+        _config_retries = APP_CONFIG.get('llm', {}).get('gemini_max_retries')
+        # Check if config value is valid, otherwise use fallback
+        if isinstance(_config_retries, int) and _config_retries >= 0:
+            _effective_retries = _config_retries
         else:
-            try:
-                _retries_str = os.getenv('GEMINI_MAX_RETRIES')
-                self.max_retries = int(_retries_str) if _retries_str is not None else FALLBACK_MAX_RETRIES
-            except (ValueError, TypeError):
-                warnings.warn(f"Invalid GEMINI_MAX_RETRIES value '{os.getenv('GEMINI_MAX_RETRIES')}'. Using default {FALLBACK_MAX_RETRIES}.")
-                self.max_retries = FALLBACK_MAX_RETRIES
+            _effective_retries = FALLBACK_MAX_RETRIES
+            if _config_retries is not None: # Warn if config value was present but invalid
+                warnings.warn(f"Invalid 'gemini_max_retries' value in config: '{_config_retries}'. Using default {FALLBACK_MAX_RETRIES}.")
+
+        # Argument overrides config/default
+        self.max_retries = max_retries if max_retries is not None else _effective_retries
         self.max_retries = max(0, self.max_retries) # Ensure non-negative
 
         # Backoff Factor
-        if backoff_factor is not None:
-            self.backoff_factor = backoff_factor
+        # Get from arg, then APP_CONFIG['llm']['gemini_backoff_factor'], then fallback constant
+        _config_backoff = APP_CONFIG.get('llm', {}).get('gemini_backoff_factor')
+        # Check if config value is valid, otherwise use fallback
+        if isinstance(_config_backoff, (float, int)) and _config_backoff >= 0:
+             _effective_backoff = float(_config_backoff)
         else:
-            try:
-                 _backoff_str = os.getenv('GEMINI_BACKOFF_FACTOR')
-                 self.backoff_factor = float(_backoff_str) if _backoff_str is not None else FALLBACK_BACKOFF_FACTOR
-            except (ValueError, TypeError):
-                 warnings.warn(f"Invalid GEMINI_BACKOFF_FACTOR value '{os.getenv('GEMINI_BACKOFF_FACTOR')}'. Using default {FALLBACK_BACKOFF_FACTOR}.")
-                 self.backoff_factor = FALLBACK_BACKOFF_FACTOR
+             _effective_backoff = FALLBACK_BACKOFF_FACTOR
+             if _config_backoff is not None: # Warn if config value was present but invalid
+                 warnings.warn(f"Invalid 'gemini_backoff_factor' value in config: '{_config_backoff}'. Using default {FALLBACK_BACKOFF_FACTOR}.")
+
+        # Argument overrides config/default
+        self.backoff_factor = backoff_factor if backoff_factor is not None else _effective_backoff
         self.backoff_factor = max(0.0, self.backoff_factor) # Ensure non-negative
 
         # --- Initialization ---

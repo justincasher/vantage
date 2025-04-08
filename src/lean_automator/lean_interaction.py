@@ -25,8 +25,18 @@ from typing import Tuple, Dict, Set, Optional, Any, List
 import logging
 import pathlib
 import functools
+import warnings
 
 # Use absolute imports assume src is in path or package installed
+try:
+    # Import APP_CONFIG and the specific accessor needed
+    from lean_automator.config_loader import APP_CONFIG, get_lean_automator_shared_lib_path
+except ImportError:
+    warnings.warn("config_loader not found. Configuration system unavailable.", ImportWarning)
+    # Define fallbacks if config_loader is missing entirely
+    APP_CONFIG = {}
+    def get_lean_automator_shared_lib_path() -> Optional[str]: return os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH') # Fallback to os.getenv
+
 try:
     # NOTE: Ensure kb_storage defines ItemStatus, KBItem etc. correctly
     from lean_automator.kb_storage import (
@@ -48,50 +58,51 @@ except ImportError:
      DEFAULT_DB_PATH = 'knowledge_base.sqlite' # Define dummy default
      # raise # Or re-raise the error if preferred
 
-# --- Load Environment Variables or Exit ---
-from dotenv import load_dotenv
-env_loaded_successfully = load_dotenv()
-
-if not env_loaded_successfully:
-    # Print error message to standard error
-    print("\nCRITICAL ERROR: Could not find or load the .env file.", file=sys.stderr)
-    print("This script relies on environment variables defined in that file.", file=sys.stderr)
-    # Show where it looked relative to, which helps debugging
-    print(f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.", file=sys.stderr)
-    sys.exit(1) # Exit the script with a non-zero status code indicating failure
-
-# Configure logging
-logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# --- Logging Configuration ---
+# Configure logging level using the LOGLEVEL environment variable (common practice).
+# The logging format can also be configured here or set globally elsewhere.
+logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper(),
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Configuration for Persistent Shared Library ---
-# Example: /path/to/your/project/vantage_lib (Root of the Lake project)
-SHARED_LIB_PATH_STR = os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH')
-# The specific package/module name is now handled internally based on assumptions or reading config.
+# --- Persistent Shared Library Configuration ---
+# Retrieve the shared library root path using the dedicated accessor function.
+# This value is expected to be set in the .env file or environment.
+SHARED_LIB_PATH_STR: Optional[str] = get_lean_automator_shared_lib_path()
 
-# Hardcoded names based on previous discussion for vantage_lib example
-# The name of the package defined in the shared library's lakefile (.lean or .toml)
-SHARED_LIB_PACKAGE_NAME = "vantage_lib"
-# The name of the primary library target / source directory within that package
-SHARED_LIB_SRC_DIR_NAME = "VantageLib"
+# Retrieve Lean package and source directory names from the loaded configuration (APP_CONFIG).
+# Use .get() for safe access and provide default values matching the previous hardcoded ones,
+# ensuring the script can function even if these keys are missing from config.yml.
+lean_paths_config = APP_CONFIG.get('lean_paths', {}) # Get the 'lean_paths' sub-dictionary safely
+SHARED_LIB_PACKAGE_NAME: str = lean_paths_config.get('shared_lib_package_name', 'vantage_lib')
+SHARED_LIB_SRC_DIR_NAME: str = lean_paths_config.get('shared_lib_src_dir_name', 'VantageLib')
 
+logger.info(f"Using shared library package name: {SHARED_LIB_PACKAGE_NAME}")
+logger.info(f"Using shared library source directory name: {SHARED_LIB_SRC_DIR_NAME}")
 
+# --- Shared Library Path Validation ---
+# Resolve and validate the retrieved shared library path string.
+SHARED_LIB_PATH: Optional[pathlib.Path] = None
 if not SHARED_LIB_PATH_STR:
-    logger.warning("LEAN_AUTOMATOR_SHARED_LIB_PATH environment variable not set. Persistent library features will likely fail.")
-    SHARED_LIB_PATH = None
+    logger.warning(f"Shared library path not configured (checked env var LEAN_AUTOMATOR_SHARED_LIB_PATH via config system). Persistent library features may fail.")
 else:
-    SHARED_LIB_PATH = pathlib.Path(SHARED_LIB_PATH_STR).resolve()
-    if not SHARED_LIB_PATH.is_dir():
-        logger.warning(f"Shared library path {SHARED_LIB_PATH} does not exist or is not a directory.")
-        SHARED_LIB_PATH = None
-    else:
-        # Optional: Add check for lakefile.lean or lakefile.toml here?
-        if not (SHARED_LIB_PATH / "lakefile.lean").is_file() and not (SHARED_LIB_PATH / "lakefile.toml").is_file():
-             logger.warning(f"Shared library path {SHARED_LIB_PATH} does not appear to contain a lakefile.lean or lakefile.toml.")
-        # Optional: Add check for source directory?
-        # if not (SHARED_LIB_PATH / SHARED_LIB_SRC_DIR_NAME).is_dir():
-        #      logger.warning(f"Shared library source directory {SHARED_LIB_PATH / SHARED_LIB_SRC_DIR_NAME} not found.")
-
+    try:
+        # Attempt to resolve the path string to an absolute Path object
+        resolved_path = pathlib.Path(SHARED_LIB_PATH_STR).resolve()
+        if resolved_path.is_dir():
+            SHARED_LIB_PATH = resolved_path
+            logger.info(f"Resolved shared library path: {SHARED_LIB_PATH}")
+            # Optional: Check for the presence of a lakefile (can remain as is)
+            if not (SHARED_LIB_PATH / "lakefile.lean").is_file() and not (SHARED_LIB_PATH / "lakefile.toml").is_file():
+                 logger.warning(f"Shared library path {SHARED_LIB_PATH} does not appear to contain a lakefile.")
+        else:
+            # Log a warning if the resolved path is not a directory
+            logger.warning(f"Resolved shared library path '{resolved_path}' does not exist or is not a directory.")
+            SHARED_LIB_PATH = None # Ensure it's None if invalid
+    except Exception as e:
+        # Log any errors during path resolution (e.g., invalid characters)
+        logger.error(f"Error resolving shared library path '{SHARED_LIB_PATH_STR}': {e}")
+        SHARED_LIB_PATH = None # Ensure it's None on error
 
 # --- Helper Functions ---
 

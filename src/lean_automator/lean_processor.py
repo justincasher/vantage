@@ -33,6 +33,12 @@ import time
 
 # --- Imports from other project modules ---
 try:
+    from lean_automator.config_loader import APP_CONFIG
+except ImportError:
+    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    APP_CONFIG = {} # Provide an empty dict as a fallback
+
+try:
     from lean_automator.kb_storage import (
         KBItem,
         ItemStatus,
@@ -51,18 +57,6 @@ except ImportError as e:
     # Define dummy types/functions to allow script loading without crashing
     KBItem = None; ItemStatus = None; ItemType = None; get_kb_item_by_name = None; save_kb_item = None; get_items_by_status = None; GeminiClient = None; DEFAULT_DB_PATH = None; lean_interaction = None; lean_proof_repair = None; # type: ignore
 
-# --- Load Environment Variables or Exit ---
-from dotenv import load_dotenv
-env_loaded_successfully = load_dotenv()
-
-if not env_loaded_successfully:
-    # Print error message to standard error
-    print("\nCRITICAL ERROR: Could not find or load the .env file.", file=sys.stderr)
-    print("This script relies on environment variables defined in that file.", file=sys.stderr)
-    # Show where it looked relative to, which helps debugging
-    print(f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.", file=sys.stderr)
-    sys.exit(1) # Exit the script with a non-zero status code indicating failure
-
 # --- Logging ---
 logger = logging.getLogger(__name__)
 
@@ -70,22 +64,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS = 2
 DEFAULT_LEAN_PROOF_MAX_ATTEMPTS = 3
 
-try:
-    LEAN_STATEMENT_MAX_ATTEMPTS = int(os.getenv('LEAN_STATEMENT_MAX_ATTEMPTS', DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS))
-    if LEAN_STATEMENT_MAX_ATTEMPTS < 1:
-         logger.warning(f"LEAN_STATEMENT_MAX_ATTEMPTS must be >= 1. Using default {DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS}.")
-         LEAN_STATEMENT_MAX_ATTEMPTS = DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS
-except (ValueError, TypeError):
-    logger.warning(f"Invalid value for LEAN_STATEMENT_MAX_ATTEMPTS. Using default {DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS}.")
+# Get configuration safely from APP_CONFIG with fallbacks to defaults
+lean_config = APP_CONFIG.get('lean_processing', {}) # Get the lean_processing section, or empty dict
+
+LEAN_STATEMENT_MAX_ATTEMPTS = lean_config.get('statement_max_attempts', DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS)
+# Validate the loaded/default value
+if not isinstance(LEAN_STATEMENT_MAX_ATTEMPTS, int) or LEAN_STATEMENT_MAX_ATTEMPTS < 1:
+    logger.warning(f"Invalid value '{LEAN_STATEMENT_MAX_ATTEMPTS}' for lean_processing.statement_max_attempts (must be int >= 1). Using default {DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS}.")
     LEAN_STATEMENT_MAX_ATTEMPTS = DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS
 
-try:
-    LEAN_PROOF_MAX_ATTEMPTS = int(os.getenv('LEAN_PROOF_MAX_ATTEMPTS', DEFAULT_LEAN_PROOF_MAX_ATTEMPTS))
-    if LEAN_PROOF_MAX_ATTEMPTS < 1:
-         logger.warning(f"LEAN_PROOF_MAX_ATTEMPTS must be >= 1. Using default {DEFAULT_LEAN_PROOF_MAX_ATTEMPTS}.")
-         LEAN_PROOF_MAX_ATTEMPTS = DEFAULT_LEAN_PROOF_MAX_ATTEMPTS
-except (ValueError, TypeError):
-    logger.warning(f"Invalid value for LEAN_PROOF_MAX_ATTEMPTS. Using default {DEFAULT_LEAN_PROOF_MAX_ATTEMPTS}.")
+LEAN_PROOF_MAX_ATTEMPTS = lean_config.get('proof_max_attempts', DEFAULT_LEAN_PROOF_MAX_ATTEMPTS)
+# Validate the loaded/default value
+if not isinstance(LEAN_PROOF_MAX_ATTEMPTS, int) or LEAN_PROOF_MAX_ATTEMPTS < 1:
+    logger.warning(f"Invalid value '{LEAN_PROOF_MAX_ATTEMPTS}' for lean_processing.proof_max_attempts (must be int >= 1). Using default {DEFAULT_LEAN_PROOF_MAX_ATTEMPTS}.")
     LEAN_PROOF_MAX_ATTEMPTS = DEFAULT_LEAN_PROOF_MAX_ATTEMPTS
 
 logger.info(f"Using LEAN_STATEMENT_MAX_ATTEMPTS = {LEAN_STATEMENT_MAX_ATTEMPTS}")

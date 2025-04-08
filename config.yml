@@ -21,5 +21,17 @@ latex:
   # Default maximum number of review cycles for LaTeX generation
   max_review_cycles: 3
 
+lean_processing:
+  # Maximum attempts allowed for generating/validating a Lean statement.
+  statement_max_attempts: 2
+  # Maximum attempts allowed for generating/validating a Lean proof for a statement.
+  proof_max_attempts: 3
+
+lean_paths:
+  # The name of the package defined in the lakefile of the persistent shared library.
+  shared_lib_package_name: "vantage_lib"
+  # The name of the primary source directory within the shared library package.
+  shared_lib_src_dir_name: "VantageLib"
+
 # Note: LEAN_AUTOMATOR_SHARED_LIB_PATH is considered user-specific
 # and should be set in the local .env file. See .env.example.
