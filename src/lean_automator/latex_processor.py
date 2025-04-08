@@ -544,21 +544,32 @@ async def generate_and_review_latex(
 
     This function orchestrates the main workflow for obtaining accepted LaTeX
     for a given `KBItem` identified by its `unique_name`.
+
     1. Fetches the item and its dependencies from the database.
+
     2. Checks if the item's current status requires LaTeX processing.
+
     3. Enters a loop (up to `MAX_REVIEW_CYCLES`):
+
         a. Calls the LLM generator (`_call_latex_statement_and_proof_generator`)
            to produce/refine the LaTeX statement and proof (if applicable),
            providing previous feedback if it's not the first cycle.
+
         b. Parses the generator's output using `_parse_combined_latex`.
+
         c. Calls the LLM reviewer (`_call_latex_statement_and_proof_reviewer`)
            to evaluate the generated LaTeX.
+
         d. Parses the reviewer's judgment and feedback using `_parse_combined_review`.
+
         e. If accepted, updates the KBItem with the accepted LaTeX, sets status to
            `LATEX_ACCEPTED`, saves it (triggering embedding generation), and returns True.
+
         f. If rejected, stores the feedback, updates status, saves, and continues the loop.
+
     4. If the loop finishes without acceptance, sets status to `LATEX_REJECTED_FINAL`
        and returns False.
+       
     Handles errors during the process, updating the item status to `ERROR`.
 
     Args:

@@ -155,10 +155,12 @@ def attempt_proof_repair(lean_code: str, error_log: str) -> Tuple[bool, str]:
 
     Returns:
         Tuple[bool, str]: A tuple containing:
+
             - bool: `True` if a fix was attempted and resulted in modified code,
               `False` otherwise (including if no matching error pattern was found,
               if the relevant handler is disabled, or if an error occurred during
               the fix attempt). Currently always `False`.
+              
             - str: The potentially modified Lean code string if a fix was applied,
               otherwise the original `lean_code`. Currently always the original
               `lean_code`.

@@ -525,22 +525,33 @@ async def generate_and_verify_lean(
     """Generates, verifies, and potentially repairs Lean code for a KBItem.
 
     This function orchestrates the full Lean processing pipeline for an item:
+
     1.  Fetches the item and checks its status and prerequisites (LaTeX statement,
         proven dependencies).
+
     2.  Generates the Lean statement signature (`... := sorry`) using an LLM if
         it doesn't exist, with retries (`LEAN_STATEMENT_MAX_ATTEMPTS`).
+
     3.  If the item requires proof:
+
         a. Enters a loop (up to `LEAN_PROOF_MAX_ATTEMPTS`) to generate proof tactics.
+
         b. Calls the LLM proof generator, providing the statement shell, informal
            proof, dependency code, and any previous compilation errors.
+
         c. Parses the full Lean code from the LLM response.
+
         d. Calls `lean_interaction.check_and_compile_item` to verify the code
            in a temporary environment and update the persistent shared library on success.
+
         e. If verification succeeds, updates status to `PROVEN` and returns True.
+
         f. If verification fails, stores the error log and continues the loop
            (potentially after attempting automated repair via `lean_proof_repair`).
+
     4.  If the item does not require proof, marks it as `PROVEN` if a valid
         statement exists.
+        
     5.  Updates the item's status (`PROVEN`, `LEAN_VALIDATION_FAILED`, `ERROR`)
         and stores relevant logs/responses in the database throughout the process.
 
