@@ -1,4 +1,4 @@
-# File: tests/unit/test_llm_call_unit.py
+# File: tests/unit/llm/test_caller_unit.py
 
 import pytest
 import pytest_asyncio
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, AsyncMock, patch, call # For mocking
 # Assuming pytest runs from root and pytest.ini sets pythonpath=src
 # Adjust the import path based on your actual project structure if src isn't in pythonpath
 try:
-    from lean_automator.llm_call import (
+    from lean_automator.llm.caller import (
         GeminiCostTracker,
         ModelCostInfo,
         ModelUsageStats,
@@ -297,10 +297,10 @@ def mock_config_and_key(mocker):
         'costs': json.loads(VALID_COST_JSON) # Use the parsed JSON for costs
         # Add other potential config keys if needed by __init__
     }
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', mock_config, create=True) # Use create=True if APP_CONFIG might not exist yet
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', mock_config, create=True)# Use create=True if APP_CONFIG might not exist yet
 
     # Mock the API key getter function
-    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value=MOCK_API_KEY)
+    mocker.patch('lean_automator.llm.caller.get_gemini_api_key', return_value=MOCK_API_KEY)
 
     # Return the mocked config for potential modification in specific tests if needed
     # Return a copy to prevent tests modifying the same dict affecting each other
@@ -337,7 +337,7 @@ def mock_genai_lib(mocker):
     mock_genai_module.configure = MagicMock()
 
     # --- Patch 'genai' where imported ---
-    mocker.patch('lean_automator.llm_call.genai', mock_genai_module)
+    mocker.patch('lean_automator.llm.caller.genai', mock_genai_module)
 
     # --- Mock Types (existing) ---
     # mocker.patch('lean_automator.llm_call.GenerationConfig', spec=GenerationConfig)
@@ -356,10 +356,10 @@ def mock_genai_lib(mocker):
     mock_genai_types_module.HarmBlockThreshold = MagicMock(
         BLOCK_MEDIUM_AND_ABOVE='BLOCK_MEDIUM_AND_ABOVE'
     )
-    mocker.patch('lean_automator.llm_call.genai_types', mock_genai_types_module)
+    mocker.patch('lean_automator.llm.caller.genai_types', mock_genai_types_module)
     # Ensure the actual exception classes are available to be caught
-    mocker.patch('lean_automator.llm_call.google_api_exceptions.ResourceExhausted', google_api_exceptions.ResourceExhausted)
-    mocker.patch('lean_automator.llm_call.google_api_exceptions.GoogleAPIError', google_api_exceptions.GoogleAPIError)
+    mocker.patch('lean_automator.llm.caller.google_api_exceptions.ResourceExhausted', google_api_exceptions.ResourceExhausted)
+    mocker.patch('lean_automator.llm.caller.google_api_exceptions.GoogleAPIError', google_api_exceptions.GoogleAPIError)
 
     # Return mocks needed for assertions
     return mock_genai_module, mock_model_instance, mock_genai_module.embed_content
@@ -406,14 +406,14 @@ def test_client_init_missing_api_key(mocker, mock_genai_lib): # Doesn't need bas
     """Test client initialization raises ValueError if GEMINI_API_KEY is missing."""
     _, _, _ = mock_genai_lib
     # Mock the key getter to return None
-    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value=None)
+    mocker.patch('lean_automator.llm.caller.get_gemini_api_key', return_value=None)
     # Mock APP_CONFIG to provide other values so only the key is missing
     mock_config = {
         'llm': {'default_gemini_model': MOCK_DEFAULT_GEN_MODEL, 'gemini_max_retries': 3, 'gemini_backoff_factor': 0.1},
         'embedding': {'default_embedding_model': MOCK_DEFAULT_EMBED_MODEL},
         'costs': {}
     }
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', mock_config, create=True)
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', mock_config, create=True)
 
     with pytest.raises(ValueError, match="Gemini API key is missing"):
         GeminiClient()
@@ -428,7 +428,7 @@ def test_client_init_missing_default_gen_model(mocker, mock_config_and_key, mock
     # If 'llm' key itself is missing, that's fine too
 
     # Re-patch APP_CONFIG with the modified version for this specific test
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', base_config)
     # Key getter is already mocked by the fixture
 
     # This should now raise the error because the value isn't found in arg (None) or APP_CONFIG
@@ -444,7 +444,7 @@ def test_client_init_missing_default_embed_model_uses_fallback(mocker, mock_conf
     if 'embedding' in base_config and 'default_embedding_model' in base_config['embedding']:
         del base_config['embedding']['default_embedding_model']
     # Re-patch APP_CONFIG with the modified version
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', base_config)
     # Key getter is already mocked
 
     # Now, the __init__ should not find the model in arg (None) or APP_CONFIG
@@ -464,7 +464,7 @@ def test_client_init_embed_model_adds_prefix(mocker, mock_config_and_key, mock_g
     # Modify the mocked config for this test case
     base_config = mock_config_and_key.copy() # Use copy
     base_config['embedding']['default_embedding_model'] = embed_model_no_prefix # Set value without prefix
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', base_config)
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', base_config)
     # Key getter is already mocked
 
     # Now __init__ should find the model name in APP_CONFIG, detect the missing prefix,
@@ -478,8 +478,8 @@ def test_client_init_with_args(mocker, mock_genai_lib): # Doesn't need config fi
     """Test initialization using direct arguments overrides config/environment."""
     mock_genai_module, _, _ = mock_genai_lib
     # Mock APP_CONFIG and key getter to return dummy values to ensure args are used
-    mocker.patch('lean_automator.llm_call.get_gemini_api_key', return_value="DUMMY_KEY_FROM_GETTER")
-    mocker.patch('lean_automator.llm_call.APP_CONFIG', {'llm': {'default_gemini_model': 'dummy-gen-model-config'}}, create=True)
+    mocker.patch('lean_automator.llm.caller.get_gemini_api_key', return_value="DUMMY_KEY_FROM_GETTER")
+    mocker.patch('lean_automator.llm.caller.APP_CONFIG', {'llm': {'default_gemini_model': 'dummy-gen-model-config'}}, create=True)
 
     custom_api_key = "ARG_API_KEY"
     custom_gen_model = "arg-gen-model"

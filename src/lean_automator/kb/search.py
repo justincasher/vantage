@@ -1,4 +1,4 @@
-# File: kb_search.py
+# File: lean_automator/kb/search.py
 
 """Generates embeddings and performs semantic search in the Knowledge Base.
 
@@ -14,19 +14,19 @@ import warnings
 from typing import List, Optional, Tuple
 
 try:
-    from lean_automator.config_loader import APP_CONFIG
+    from lean_automator.config.loader import APP_CONFIG
 except ImportError:
     warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
     APP_CONFIG = {} # Provide an empty dict as a fallback
 
 try:
-    from lean_automator.llm_call import GeminiClient
+    from lean_automator.llm.caller import GeminiClient
 except ImportError:
     warnings.warn("llm_call.GeminiClient not found. Embedding generation/search will fail.", ImportWarning)
     GeminiClient = None # type: ignore
 
 try:
-    from lean_automator.kb_storage import KBItem, get_kb_item_by_name, get_all_items_with_embedding, DEFAULT_DB_PATH, EMBEDDING_DTYPE
+    from lean_automator.kb.storage import KBItem, get_kb_item_by_name, get_all_items_with_embedding, DEFAULT_DB_PATH, EMBEDDING_DTYPE
 except ImportError:
      warnings.warn("kb_storage not found. KB search functionality will be limited.", ImportWarning)
      KBItem = None # type: ignore

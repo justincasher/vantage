@@ -1,6 +1,6 @@
-# File: tests/integration/test_llm_call_integration.py
+# File: tests/integration/llm/test_caller_integration.py
 
-"""Integration tests for the llm_call module, specifically GeminiClient.
+"""Integration tests for the caller module, specifically GeminiClient.
 
 These tests interact with the live Google Gemini API to verify the functionality
 of the GeminiClient class, including text generation, embedding creation,
@@ -26,9 +26,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 # config_loader imports with fallback
 try:
     # Import both the config dictionary and the specific API key getter
-    from lean_automator.config_loader import APP_CONFIG, get_gemini_api_key
+    from lean_automator.config.loader import APP_CONFIG, get_gemini_api_key
 except ImportError:
-    warnings.warn("config_loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
+    warnings.warn("lean_automator.config.loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
     # Provide fallbacks if the config loader isn't available
     APP_CONFIG = {}
     # Define a fallback getter if the real one isn't imported
@@ -37,7 +37,7 @@ except ImportError:
          return os.getenv('GEMINI_API_KEY')
 
 # Use absolute imports
-from lean_automator.llm_call import (
+from lean_automator.llm.caller import (
     GeminiClient,
     GeminiCostTracker,
     ModelCostInfo, # Import if needed for direct assertion
@@ -138,7 +138,7 @@ def client(api_key: str, cost_tracker: GeminiCostTracker) -> GeminiClient:
         GeminiClient: A configured client instance ready for API calls.
     """
     # Re-import locally within fixture scope if needed, though module scope should work
-    # from lean_automator.llm_call import GeminiClient
+    # from lean_automator.llm.caller import GeminiClient
     return GeminiClient(
         api_key=api_key,
         default_generation_model=TEST_GEN_MODEL,

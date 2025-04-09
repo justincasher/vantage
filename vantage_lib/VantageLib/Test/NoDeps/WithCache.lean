@@ -1,0 +1,1 @@
+def simpleDefWC : Nat := 6

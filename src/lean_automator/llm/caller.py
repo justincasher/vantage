@@ -1,4 +1,4 @@
-# File: llm_call.py
+# File: lean_automator/lm/caller.py
 
 """Provides a client for interacting with Google's Gemini API.
 
@@ -24,9 +24,10 @@ from google.api_core import exceptions as google_api_exceptions # For specific A
 
 try:
     # Import both the config dictionary and the specific API key getter
-    from lean_automator.config_loader import APP_CONFIG, get_gemini_api_key
+    from lean_automator.config.loader import APP_CONFIG, get_gemini_api_key # Updated import path
 except ImportError:
-    warnings.warn("config_loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
+    # Updated warning message to reflect the new path
+    warnings.warn("lean_automator.config.loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.", ImportWarning)
     # Provide fallbacks if the config loader isn't available
     APP_CONFIG = {}
     # Define a fallback getter if the real one isn't imported

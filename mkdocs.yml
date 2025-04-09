@@ -40,25 +40,31 @@ theme:
 nav:
   - 'Welcome': 'index.md'
   - 'Getting Started':
-    - 'Installation & Setup': 'getting-started/index.md' #
+    - 'Installation & Setup': 'getting-started/index.md'
     - 'Configuration': 'getting-started/configuration.md'
     - 'Usage': 'getting-started/usage.md'
-  - 'API Reference': 
-    - 'Overview': 'reference/index.md' 
-    - 'Configuration Loader': 'reference/config_loader.md'
-    - 'KB Search': 'reference/kb_search.md' 
-    - 'KB Storage': 'reference/kb_storage.md'
-    - 'LaTeX Processor': 'reference/latex_processor.md'
-    - 'Lean Interaction': 'reference/lean_interaction.md'
-    - 'Lean Processor': 'reference/lean_processor.md'
-    - 'Lean LSP Analyzer': 'reference/lean_lsp_analyzer.md'
-    - 'Lean Proof Repair': 'reference/lean_proof_repair.md'
-    - 'LLM Call': 'reference/llm_call.md'
+  - 'API Reference':
+    - 'Overview': 'reference/index.md'
+    - 'Config':
+        - 'Config Loader': 'reference/config/loader.md'
+    - 'Knowledge Base (KB)':
+        - 'KB Search': 'reference/kb/search.md'
+        - 'KB Storage': 'reference/kb/storage.md'
+    - 'LaTeX':
+        - 'LaTeX Processor': 'reference/latex/processor.md'
+    - 'Lean':
+        - 'Lean Interaction': 'reference/lean/interaction.md'
+        - 'Lean LSP Analyzer': 'reference/lean/lsp_analyzer.md'
+        - 'Lean Processor': 'reference/lean/processor.md'
+        - 'Lean Proof Repair': 'reference/lean/proof_repair.md'
+    - 'LLM':
+        - 'LLM Caller': 'reference/llm/caller.md'
   - 'Contributing':
     - 'How to Contribute': 'contributing/index.md'
     - 'Testing': 'contributing/testing.md'
     - 'Coding Style': 'contributing/coding_style_guidelines.md'
     - 'Code of Conduct': 'contributing/code_of_conduct.md'
+
 
 # Markdown Extensions (Enable extra formatting features)
 markdown_extensions:

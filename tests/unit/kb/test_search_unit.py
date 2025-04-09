@@ -1,4 +1,4 @@
-# File: tests/unit/test_kb_search_unit.py
+# File: tests/unit/kb/test_search_unit.py
 
 import pytest
 import pytest_asyncio
@@ -9,14 +9,14 @@ from typing import List, Tuple, Optional
 
 # Assuming pytest runs from root and pytest.ini sets pythonpath=src
 try:
-    from lean_automator.kb_search import (
+    from lean_automator.kb.search import (
         generate_embedding,
         _bytes_to_vector,
         _cosine_similarity,
         find_similar_items
     )
-    from lean_automator.llm_call import GeminiClient # Needed for type hints and mocking
-    from lean_automator.kb_storage import KBItem, EMBEDDING_DTYPE, DEFAULT_DB_PATH, ItemType, ItemStatus # Import necessary items
+    from lean_automator.llm.caller import GeminiClient 
+    from lean_automator.kb.storage import KBItem, EMBEDDING_DTYPE, DEFAULT_DB_PATH, ItemType, ItemStatus 
 except ImportError as e:
     pytest.skip(f"Skipping test module: Failed to import components. Error: {e}", allow_module_level=True)
 
@@ -66,8 +66,8 @@ def mock_full_kb_items() -> dict:
 @pytest.fixture(autouse=True) # Apply these patches to all tests in the module
 def patch_db_functions(mocker, mock_kb_items_for_search, mock_full_kb_items):
     """Patches kb_storage functions used by kb_search."""
-    mock_get_all = mocker.patch('lean_automator.kb_search.get_all_items_with_embedding', return_value=mock_kb_items_for_search)
-    mock_get_by_name = mocker.patch('lean_automator.kb_search.get_kb_item_by_name', side_effect=lambda name, db_path=None: mock_full_kb_items.get(name))
+    mock_get_all = mocker.patch('lean_automator.kb.search.get_all_items_with_embedding', return_value=mock_kb_items_for_search)
+    mock_get_by_name = mocker.patch('lean_automator.kb.search.get_kb_item_by_name', side_effect=lambda name, db_path=None: mock_full_kb_items.get(name))
     return mock_get_all, mock_get_by_name
 
 

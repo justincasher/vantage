@@ -1,4 +1,4 @@
-# File: config_loader.py
+# File: lean_automator/config/loader.py
 
 """Loads and manages application configuration from multiple sources.
 

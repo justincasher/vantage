@@ -17,11 +17,10 @@ if project_root not in sys.path:
 
 # --- Module Imports (after path setup and dotenv) ---
 try:
-    from lean_automator import kb_storage
-    from lean_automator import latex_processor
-    from lean_automator import llm_call
-    # Ensure ItemType is imported if used directly
-    from lean_automator.kb_storage import ItemType, ItemStatus
+    from lean_automator.kb import storage as kb_storage          
+    from lean_automator.latex import processor as latex_processor 
+    from lean_automator.llm import caller as llm_call             
+    from lean_automator.kb.storage import ItemType, ItemStatus    
 except ImportError as e:
     print(f"Error importing project modules: {e}")
     print("Ensure the script is run from the project root or adjust PYTHONPATH.")

@@ -1,4 +1,4 @@
-# File: lean_proof_repair.py
+# File: lean_automator/lean/proof_repair.py
 
 """Attempts heuristic automated repairs for common Lean compilation errors.
 
@@ -17,11 +17,12 @@ added here.
 import re
 import logging
 from typing import Tuple, Set
+import warnings
 
 try:
-    from lean_automator.config_loader import APP_CONFIG
+    from lean_automator.config.loader import APP_CONFIG 
 except ImportError:
-    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
+    warnings.warn("lean_automator.config.loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
     APP_CONFIG = {} # Provide an empty dict as a fallback
 
 logger = logging.getLogger(__name__)
