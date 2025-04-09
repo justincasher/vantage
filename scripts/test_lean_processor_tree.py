@@ -16,17 +16,17 @@ if project_root not in sys.path:
 # --- Module Imports ---
 try:
     # Use src prefix if running script directly and src is not installed
-    from src.lean_automator import kb_storage
-    from src.lean_automator import lean_processor # Import the lean processor
-    from src.lean_automator import llm_call
-    from src.lean_automator.kb_storage import ItemType, ItemStatus
+    from src.lean_automator.kb import storage as kb_storage       
+    from src.lean_automator.lean import processor as lean_processor 
+    from src.lean_automator.llm import caller as llm_call         
+    from src.lean_automator.kb.storage import ItemType, ItemStatus
 except ImportError:
     # Fallback if running as installed package
     try:
-        from lean_automator import kb_storage
-        from lean_automator import lean_processor
-        from lean_automator import llm_call
-        from lean_automator.kb_storage import ItemType, ItemStatus
+        from lean_automator.kb import storage as kb_storage       
+        from lean_automator.lean import processor as lean_processor
+        from lean_automator.llm import caller as llm_call         
+        from lean_automator.kb.storage import ItemType, ItemStatus
     except ImportError as e:
         print(f"Error importing project modules: {e}")
         print("Ensure the script is run from the project root or the package is installed.")

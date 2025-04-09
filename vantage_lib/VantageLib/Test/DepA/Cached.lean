@@ -1,0 +1,1 @@
+def depValueCached : Nat := 10

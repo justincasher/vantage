@@ -1,4 +1,4 @@
-# File: lean_processor.py
+# File: lean_automator/lean/processor.py
 
 """Orchestrates Lean code generation and verification for Knowledge Base items.
 
@@ -33,13 +33,13 @@ import time
 
 # --- Imports from other project modules ---
 try:
-    from lean_automator.config_loader import APP_CONFIG
+    from lean_automator.config.loader import APP_CONFIG
 except ImportError:
     warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
     APP_CONFIG = {} # Provide an empty dict as a fallback
 
 try:
-    from lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         KBItem,
         ItemStatus,
         ItemType,
@@ -48,10 +48,10 @@ try:
         get_items_by_status,
         DEFAULT_DB_PATH
     )
-    from lean_automator.llm_call import GeminiClient
+    from lean_automator.llm.caller import GeminiClient
     # lean_interaction module now uses the persistent library strategy
-    from lean_automator import lean_interaction
-    from lean_automator import lean_proof_repair # Import the repair module
+    from . import interaction as lean_interaction
+    from . import proof_repair as lean_proof_repair # Import the repair module
 except ImportError as e:
     warnings.warn(f"lean_processor: Required modules not found: {e}")
     # Define dummy types/functions to allow script loading without crashing

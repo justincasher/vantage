@@ -97,6 +97,12 @@ for path in sorted(package_dir.rglob("*.py")):
         print(f"Skipping root __init__.py: {path}")
         continue  # Move to the next file in the loop
 
+    # --- NEW: Skip ALL other __init__.py files ---
+    # Avoid generating pages for subdirectory package markers, which usually cause errors.
+    if path.name == "__init__.py":
+        print(f"Skipping subdirectory __init__.py: {path}")
+        continue # Move to the next file in the loop
+
     # --- Extract Module Docstring ---
     # Call the helper function to get the module-level docstring
     # We need this for both the individual page workaround and the index page
@@ -107,6 +113,7 @@ for path in sorted(package_dir.rglob("*.py")):
     doc_identifier = str(module_path).replace("/", ".")
     # Calculate the output Markdown file path relative to the MkDocs 'docs' directory
     # (e.g., 'reference/utils/helpers.md')
+    # Ensure the path reflects the new subdirectory structure
     output_md_path = reference_output_dir / module_path.relative_to(package_dir.name).with_suffix(".md")
 
     print(f"  Found module: {doc_identifier}")
@@ -123,10 +130,9 @@ for path in sorted(package_dir.rglob("*.py")):
     # --- Collect Index Page Information ---
     # Calculate the link target relative to the 'reference' directory
     link_target = output_md_path.relative_to(reference_output_dir).as_posix() # Use POSIX paths
-    # Create a user-friendly title
+    # Create a user-friendly title (using the actual module filename)
     link_title = path.stem.replace('_', ' ').title()
-    if path.name == "__init__.py":
-        link_title = path.parent.name.replace('_', ' ').title() + " (Package)"
+    # Note: The logic for naming __init__ files based on parent dir is no longer needed here.
 
     # Append the title, target path, AND the docstring to the list
     index_page_data.append((link_title, link_target, module_docstring))
@@ -147,8 +153,8 @@ with mkdocs_gen_files.open(index_path, "w") as fd:
 
     # Sort the collected data alphabetically by title for a clean index
     for title, target, docstring in sorted(index_page_data):
-        # Convert title to lower case
-        title = title.lower()
+        # Use the previously generated title directly
+        # title = title.lower() # Optional: keep title case as generated
 
         # Write the title as a heading with a link
         print(f"### [{title}]({target})\n", file=fd)

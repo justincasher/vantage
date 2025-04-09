@@ -1,4 +1,4 @@
-# File: latex_processor.py
+# File: lean_automator/latex/processor.py
 
 """Handles LaTeX generation and review for Knowledge Base items using an LLM.
 
@@ -21,14 +21,14 @@ from typing import Optional, Tuple, List, Dict, Any
 
 # --- Imports from other project modules ---
 try:
-    from lean_automator.config_loader import APP_CONFIG
+    from lean_automator.config.loader import APP_CONFIG
 except ImportError:
     warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
     APP_CONFIG = {} # Provide an empty dict as a fallback
 
 try:
     # Need KBItem definition, DB access functions, Status Enum, ItemType
-    from lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         KBItem,
         ItemStatus,
         ItemType, # Import ItemType
@@ -38,7 +38,7 @@ try:
         get_items_by_status # Added for batch processing
     )
     # Need LLM client
-    from lean_automator.llm_call import GeminiClient
+    from lean_automator.llm.caller import GeminiClient
 except ImportError:
     warnings.warn("latex_processor: Required modules (kb_storage, llm_call) not found.")
     KBItem = None; ItemStatus = None; ItemType = None; get_kb_item_by_name = None; save_kb_item = None; GeminiClient = None; DEFAULT_DB_PATH = None; get_items_by_status = None # type: ignore

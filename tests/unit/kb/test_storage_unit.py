@@ -1,4 +1,4 @@
-# File: tests/unit/test_kb_storage_unit.py
+# File: tests/unit/kb/test_storage_unit.py
 
 import pytest
 import json
@@ -20,7 +20,7 @@ if project_root not in sys.path:
 
 try:
     # Assuming pytest runs from root and pytest.ini sets pythonpath=src
-    from src.lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         KBItem, ItemType, ItemStatus, LatexLink, _sentinel, EMBEDDING_DTYPE
     )
     from typing import List, Optional, Dict, Any, Generator, Tuple # Added missing imports

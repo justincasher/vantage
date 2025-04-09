@@ -1,4 +1,4 @@
-# File: kb_storage.py
+# File: lean_automator/kb/storage.py
 
 """Defines data structures and SQLite storage for a mathematical knowledge base.
 
@@ -26,14 +26,14 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any, Generator, Tuple
 
 try:
-    from lean_automator.config_loader import APP_CONFIG
+    from lean_automator.config.loader import APP_CONFIG
 except ImportError:
     warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
     APP_CONFIG = {} # Provide an empty dict as a fallback
 
 # Use absolute imports assuming 'src' is in the path or project is installed
 try:
-    from lean_automator.llm_call import GeminiClient
+    from lean_automator.llm.caller import GeminiClient
 except ImportError:
     warnings.warn("llm_call.GeminiClient not found. Embedding generation in save_kb_item will fail.", ImportWarning)
     GeminiClient = None # type: ignore
@@ -646,7 +646,7 @@ async def save_kb_item(item: KBItem, client: Optional[GeminiClient] = None, db_p
     if should_generate_latex or should_generate_nl:
         try:
             # Import necessary embedding generation function dynamically
-            from lean_automator import kb_search as kb_search_module
+            from lean_automator.kb import search as kb_search_module
             kb_search = kb_search_module
         except ImportError:
             warnings.warn("kb_search module not found when needed for embedding generation.", ImportWarning)

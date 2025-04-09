@@ -1,4 +1,4 @@
-# File: lean_lsp_analyzer.py
+# File: lean_automator/lean/lsp_analyzer.py
 
 import asyncio
 import json

@@ -1,6 +1,6 @@
-# File: tests/integration/test_kb_storage_integration.py
+# File: tests/integration/kb/test_storage_integration.py
 
-"""Integration tests for the Knowledge Base storage module (kb_storage).
+"""Integration tests for the Knowledge Base storage module (storage).
 
 Verifies database interactions including initialization, saving new items,
 updating existing items (UPSERT), retrieving items by various criteria,
@@ -21,8 +21,8 @@ import logging # Import logging
 
 # Import the module to be tested, assuming 'src' is discoverable or using path adjustments
 # If running pytest from the root directory, it should find lean_automator under src
-from lean_automator import kb_storage
-from lean_automator.kb_storage import (
+from lean_automator.kb import storage as kb_storage
+from lean_automator.kb.storage import (
     KBItem, ItemType, ItemStatus, LatexLink,
     DEFAULT_DB_PATH, # Import the default path for comparison if needed
     EMBEDDING_DTYPE # Import dtype for embedding tests

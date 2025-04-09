@@ -1,4 +1,4 @@
-# File: tests/integration/test_kb_search_integration.py
+# File: tests/integration/kb/test_search_integration.py
 
 """Integration tests for the Knowledge Base semantic search functionality.
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
 try:
-    from lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         initialize_database,
         save_kb_item, # async
         get_kb_item_by_name, # sync
@@ -34,9 +34,9 @@ try:
         ItemType,
         EMBEDDING_DTYPE
     )
-    from lean_automator.kb_search import find_similar_items # async
+    from lean_automator.kb.search import find_similar_items # async
     # Import GeminiClient only for type hinting if needed, we will mock its usage
-    from lean_automator.llm_call import GeminiClient
+    from lean_automator.llm.caller import GeminiClient
 except ImportError as e:
     pytest.skip(f"Skipping test module: Failed to import components. Error: {e}", allow_module_level=True)
 
@@ -135,7 +135,7 @@ def mock_generate_query_embedding(mocker):
     mock_query_vec = np.array([0.95, 0.05, 0.0, 0.0], dtype=EMBEDDING_DTYPE)
     # Patch the function where it's used (within the kb_search module)
     # Use autospec=True to help ensure the mock signature matches the original
-    return mocker.patch('lean_automator.kb_search.generate_embedding', return_value=mock_query_vec, autospec=True)
+    return mocker.patch('lean_automator.kb.search.generate_embedding', return_value=mock_query_vec, autospec=True)
 
 @pytest.fixture
 def mock_gemini_client_instance(mocker) -> MagicMock:

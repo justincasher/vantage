@@ -1,4 +1,4 @@
-# File: tests/integration/test_lean_interaction_integration.py
+# File: tests/integration/lean/test_interaction_integration.py
 
 import pytest
 import os
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, call # Keep mocks if needed for 
 # Adjust path to import from src
 # (Assuming project structure allows this)
 try:
-    from lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         initialize_database,
         save_kb_item,
         get_kb_item_by_name,
@@ -23,18 +23,18 @@ try:
         ItemStatus,
         ItemType
     )
-    from lean_automator.lean_interaction import check_and_compile_item
+    from lean_automator.lean.interaction import check_and_compile_item 
     # Temporarily import internal helper for one test setup
-    from lean_automator.lean_interaction import _generate_imports_for_target
+    from lean_automator.lean.interaction import _generate_imports_for_target
 except ImportError as e:
     print(f"Error importing modules: {e}", file=sys.stderr)
     raise
 
 # --- Add Config Loader Imports ---
 try:
-    from lean_automator.config_loader import APP_CONFIG, get_lean_automator_shared_lib_path
+    from lean_automator.config.loader import APP_CONFIG, get_lean_automator_shared_lib_path
 except ImportError:
-    warnings.warn("config_loader not found. Tests might use fallback config.", ImportWarning)
+    warnings.warn("lean_automator.config.loader not found. Tests might use fallback config.", ImportWarning) 
     APP_CONFIG = {} # Provide fallback empty config
     def get_lean_automator_shared_lib_path() -> Optional[str]:
         # Fallback directly to environment variable if config loader is missing
@@ -415,9 +415,9 @@ async def test_compile_fail_timeout_mocked(test_db, mocker):
         return subprocess.CompletedProcess(args=command_args, returncode=0, stdout='Mock output', stderr='')
 
     # Mock subprocess.run used within the lean_interaction module
-    mock_subprocess_run = mocker.patch('lean_automator.lean_interaction.subprocess.run', side_effect=mock_run_side_effect)
+    mock_subprocess_run = mocker.patch('lean_automator.lean.interaction.subprocess.run', side_effect=mock_run_side_effect)
     # Mock shutil.which if stdlib detection relies on it directly
-    mock_shutil_which = mocker.patch('lean_automator.lean_interaction.shutil.which', return_value='/fake/path/to/lean')
+    mock_shutil_which = mocker.patch('lean_automator.lean.interaction.shutil.which', return_value='/fake/path/to/lean')
 
 
     # Call the function under test

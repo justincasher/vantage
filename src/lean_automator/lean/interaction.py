@@ -1,4 +1,4 @@
-# File: lean_interaction.py
+# File: lean_automator/lean/interaction.py
 
 """Provides functions to interact with the Lean prover via Lake.
 
@@ -9,7 +9,7 @@ items (`KBItem`). It defines functions to:
 - Execute `lake build` commands asynchronously.
 - Update a persistent shared Lean library with successfully verified code.
 - Manage database status updates based on validation outcomes.
-- **On validation failure, uses lean_lsp_analyzer to generate detailed error logs.**
+- On validation failure, uses lean_lsp_analyzer to generate detailed error logs.
 """
 
 import asyncio
@@ -27,7 +27,7 @@ import warnings
 # Use absolute imports assume src is in path or package installed
 try:
     # Import APP_CONFIG and the specific accessor needed
-    from lean_automator.config_loader import APP_CONFIG, get_lean_automator_shared_lib_path
+    from lean_automator.config.loader import APP_CONFIG, get_lean_automator_shared_lib_path
 except ImportError:
     warnings.warn("config_loader not found. Configuration system unavailable.", ImportWarning)
     # Define fallbacks if config_loader is missing entirely
@@ -36,7 +36,7 @@ except ImportError:
 
 try:
     # NOTE: Ensure kb_storage defines ItemStatus, KBItem etc. correctly
-    from lean_automator.kb_storage import (
+    from lean_automator.kb.storage import (
         KBItem,
         ItemStatus,
         ItemType, # Make sure ItemType is imported if used internally
@@ -57,7 +57,7 @@ except ImportError:
 
 # --- Import the new LSP analyzer ---
 try:
-    from .lean_lsp_analyzer import analyze_lean_failure
+    from lean_automator.lean.lsp_analyzer import analyze_lean_failure
 except ImportError:
      print("Error: Failed to import lean_lsp_analyzer.", file=sys.stderr)
      # Define a dummy async function if import fails, to allow loading

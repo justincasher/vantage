@@ -1,4 +1,4 @@
-# tests/unit/test_lean_interaction_unit.py
+# tests/unit/lean/test_interaction_unit.py
 
 import pytest
 import asyncio
@@ -17,7 +17,7 @@ import warnings
 # --- Imports for module under test and dependencies ---
 try:
     # Import the module under test
-    from src.lean_automator.lean_interaction import (
+    from src.lean_automator.lean.interaction import (
         _module_name_to_path,
         _generate_imports_for_target,
         _create_temp_env_for_verification,
@@ -27,18 +27,18 @@ try:
         # Module-level constants will be patched via the module object
     )
     # Import kb_storage components AND the module itself for patching
-    from src.lean_automator.kb_storage import (
+    from src.lean_automator.kb.storage import (
          KBItem, ItemStatus, ItemType, LatexLink, _sentinel, DEFAULT_DB_PATH,
          # Don't import the functions we are mocking here, import the module
          get_kb_item_by_name, # Needed for mocks in check_and_compile tests
          save_kb_item        # Needed for mocks in check_and_compile tests
     )
     # Import the actual lean_interaction and kb_storage modules for patching
-    from src.lean_automator import lean_interaction as lean_interaction_module
-    from src.lean_automator import kb_storage as kb_storage_module
+    from src.lean_automator.lean import interaction as lean_interaction_module
+    from src.lean_automator.kb import storage as kb_storage_module
 
     # Import for patching APP_CONFIG or related accessors if needed elsewhere
-    from src.lean_automator import config_loader
+    from src.lean_automator.config import loader as config_loader # Using alias for consistency if needed
 
 except ImportError as e:
      pytest.skip(f"Skipping lean_interaction unit tests due to import error: {e}", allow_module_level=True)
