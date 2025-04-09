@@ -1,5 +1,36 @@
 # File: lean_automator/lean/lsp_analyzer.py
 
+"""Provides detailed analysis of Lean code failures for LLM self-correction.
+
+This module is a key component of an autoformalization system, designed to
+give a Large Language Model (LLM) the necessary feedback to debug and refine
+its own generated Lean code. It features the `LeanLspClient` class, an
+asynchronous client that interfaces with the Lean Language Server (`lean --server`)
+via stdio. This client manages the server process, handles LSP message protocols,
+processes diagnostics, and queries proof states.
+
+The primary function, `analyze_lean_failure`, takes Lean code (typically output
+by an LLM that failed verification) and performs the following steps:
+
+1. Starts and initializes the `lean --server` with the correct project context.
+
+2. Sends the Lean code snippet to the server for analysis.
+
+3. Captures detailed diagnostic information (errors, warnings) reported by Lean.
+
+4. Queries the specific proof goal state (`$/lean/plainGoal`) before each relevant line.
+
+5. Produces an annotated version of the original code, interspersing the goal states
+   and diagnostics as comments directly preceding the lines they pertain to.
+   
+6. Appends the original high-level build error (e.g., from `lake build`).
+
+The output from `analyze_lean_failure` is formatted specifically to be fed back
+into the LLM, providing it with fine-grained, contextual information about the
+errors and proof obligations, enabling it to attempt automated repairs on its
+previously generated, incorrect Lean code.
+"""
+
 import asyncio
 import json
 import logging
