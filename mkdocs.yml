@@ -51,6 +51,7 @@ nav:
     - 'LaTeX Processor': 'reference/latex_processor.md'
     - 'Lean Interaction': 'reference/lean_interaction.md'
     - 'Lean Processor': 'reference/lean_processor.md'
+    - 'Lean LSP Analyzer': 'reference/lean_lsp_analyzer.md'
     - 'Lean Proof Repair': 'reference/lean_proof_repair.md'
     - 'LLM Call': 'reference/llm_call.md'
   - 'Contributing':
