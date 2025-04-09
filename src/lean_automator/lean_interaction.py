@@ -807,6 +807,7 @@ async def check_and_compile_item(
                         lean_code=current_target_item_state.lean_code,
                         lean_executable_path=lean_exe, # Use derived lean_exe path
                         cwd=temp_project_path_str,     # Run in the temp dir context
+                        shared_lib_path=SHARED_LIB_PATH, 
                         timeout_seconds=lsp_timeout,
                         fallback_error=lake_build_output # Pass original lake output as fallback
                     )

@@ -9,6 +9,8 @@ import re
 import sys
 import uuid
 from typing import Any, Dict, Optional, Tuple, List, AsyncGenerator
+from collections import defaultdict
+import subprocess
 
 # --- Logging Configuration ---
 # Configure logging level using the LOGLEVEL environment variable (common practice).
@@ -48,7 +50,7 @@ class LeanLspClient:
         writer (Optional[asyncio.StreamWriter]): Stream writer for process stdin.
         reader (Optional[asyncio.StreamReader]): Stream reader for process stdout.
     """
-    def __init__(self, lean_executable_path: str, cwd: str, timeout: int = DEFAULT_LSP_TIMEOUT):
+    def __init__(self, lean_executable_path: str, cwd: str, timeout: int = DEFAULT_LSP_TIMEOUT, shared_lib_path: Optional[pathlib.Path] = None):
         """Initializes the LeanLspClient.
 
         Args:
@@ -60,6 +62,7 @@ class LeanLspClient:
         self.lean_executable_path = lean_executable_path
         self.cwd = cwd
         self.timeout = timeout
+        self.shared_lib_path = shared_lib_path
         self.process: Optional[asyncio.subprocess.Process] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self.reader: Optional[asyncio.StreamReader] = None
@@ -71,7 +74,7 @@ class LeanLspClient:
         self._closed = False
 
     async def start_server(self) -> None:
-        """Starts the lean --server subprocess and establishes communication streams.
+        """Starts the lean --server subprocess and assigns communication streams.
 
         Initializes the stdin, stdout, and stderr pipes for interaction. Starts
         background tasks to read stdout (for LSP messages) and stderr (for logging).
@@ -87,28 +90,94 @@ class LeanLspClient:
 
         logger.info(f"Starting lean server: {self.lean_executable_path} --server in {self.cwd}")
         try:
+            # --- Construct LEAN_PATH for LSP Server ---
+            subprocess_env = os.environ.copy()
+            lean_paths: List[str] = []
+
+            # 1. Detect Stdlib Path
+            std_lib_path: Optional[str] = None
+            try:
+                logger.debug(f"LSP Env: Detecting stdlib path using '{self.lean_executable_path} --print-libdir'")
+                # Using blocking call here for simplicity before async process starts.
+                lean_path_proc = subprocess.run([self.lean_executable_path, '--print-libdir'],
+                                                capture_output=True, text=True, check=True, timeout=10, encoding='utf-8')
+                path_candidate = lean_path_proc.stdout.strip()
+                if path_candidate and pathlib.Path(path_candidate).is_dir():
+                    std_lib_path = path_candidate
+                    logger.info(f"LSP Env: Detected Lean stdlib path: {std_lib_path}")
+                    lean_paths.append(std_lib_path)
+                else:
+                    logger.warning(f"LSP Env: Command '{self.lean_executable_path} --print-libdir' did not return valid directory: '{path_candidate}'")
+            except Exception as e:
+                logger.warning(f"LSP Env: Failed to detect Lean stdlib path via --print-libdir: {e}. Build path might be incomplete.")
+
+            # 2. Add Shared Library Build Path (if provided via __init__)
+            # Use hasattr for safety in case old instances exist without the attribute during development
+            if hasattr(self, 'shared_lib_path') and self.shared_lib_path and self.shared_lib_path.is_dir():
+                # Standard lake build path relative to the library root
+                shared_lib_build_path = self.shared_lib_path / ".lake" / "build" / "lib"
+                if shared_lib_build_path.is_dir(): # Check if it actually exists
+                    abs_shared_lib_build_path = str(shared_lib_build_path.resolve())
+                    logger.info(f"LSP Env: Adding shared lib build path: {abs_shared_lib_build_path}")
+                    lean_paths.append(abs_shared_lib_build_path)
+                else:
+                    logger.warning(f"LSP Env: Shared library path provided ({self.shared_lib_path}), but build dir not found at {shared_lib_build_path}")
+            elif hasattr(self, 'shared_lib_path'): # Log if attribute exists but wasn't valid/provided
+                logger.debug("LSP Env: shared_lib_path attribute exists but is not a valid directory or was not provided.")
+
+
+            # 3. Add Temporary Project's *Own* Build Path
+            temp_project_build_path = pathlib.Path(self.cwd) / ".lake" / "build" / "lib"
+            abs_temp_project_build_path = str(temp_project_build_path.resolve())
+            logger.debug(f"LSP Env: Adding temp project's own potential build path: {abs_temp_project_build_path}")
+            lean_paths.append(abs_temp_project_build_path) # Add even if it doesn't exist yet
+
+            # 4. Combine with existing LEAN_PATH (if any)
+            existing_lean_path = subprocess_env.get('LEAN_PATH')
+            if existing_lean_path:
+                # Avoid adding duplicates if already present
+                if existing_lean_path not in lean_paths:
+                    lean_paths.append(existing_lean_path)
+                else:
+                    logger.debug(f"LSP Env: Existing LEAN_PATH '{existing_lean_path}' is already covered by detected paths.")
+
+            # Set the final LEAN_PATH
+            if lean_paths:
+                # Filter out potential duplicates just in case before joining
+                unique_lean_paths = []
+                seen_paths = set()
+                for p in lean_paths:
+                    if p not in seen_paths:
+                        unique_lean_paths.append(p)
+                        seen_paths.add(p)
+
+                final_lean_path = os.pathsep.join(unique_lean_paths)
+                subprocess_env['LEAN_PATH'] = final_lean_path
+                logger.info(f"LSP Env: Setting LEAN_PATH for lean --server: {final_lean_path}")
+            else:
+                logger.warning("LSP Env: Could not determine any paths for LEAN_PATH.")
+            # --- End LEAN_PATH Construction ---
+
+            # Now create the subprocess with the modified environment
             self.process = await asyncio.create_subprocess_exec(
                 self.lean_executable_path, '--server',
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, # Capture stderr for debugging
+                stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
-                env=os.environ.copy() # Inherit environment
+                env=subprocess_env
             )
-            if self.process.stdin is None or self.process.stdout is None or self.process.stderr is None:
-                 raise ConnectionError("Failed to get streams from lean server process.")
 
-            # Setup writer and reader using the process streams
-            self.writer = asyncio.StreamWriter(self.process.stdin, self._get_loop(), None) # type: ignore[arg-type]
-            self.reader = asyncio.StreamReader(self._get_loop())
-            protocol = asyncio.StreamReaderProtocol(self.reader, self._get_loop())
-            # Connect the process's stdout to the reader via the protocol
-            transport, _ = await self._get_loop().connect_read_pipe(lambda: protocol, self.process.stdout) # type: ignore[arg-type]
+            # --- Simplified Stream Assignment ---
+            # Assign the streams directly provided by the subprocess
+            self.reader = self.process.stdout
+            self.writer = self.process.stdin
+            # --- End Simplified Assignment ---
 
             # Start task to read stderr separately for debugging
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="lsp_stderr_reader")
 
-            # Start the main message reader task
+            # Start the main message reader task (reads from self.reader)
             self._reader_task = asyncio.create_task(self._message_reader_loop(), name="lsp_message_reader")
             logger.info("Lean server started successfully.")
 
@@ -199,6 +268,7 @@ class LeanLspClient:
             json_body_str = json_body_bytes.decode('utf-8') # Body is UTF-8
 
             message = json.loads(json_body_str)
+            
             # logger.debug(f"LSP Received: {json.dumps(message, indent=2)}") # Verbose logging
             return message
 
@@ -224,9 +294,7 @@ class LeanLspClient:
         """Continuously reads messages from stdout and dispatches them.
 
         Runs as a background task. Reads messages using `_read_message`.
-        If a message is a response, it finds the corresponding waiting request
-        future and sets its result or exception. If it's a notification, it
-        puts it onto the `_notifications_queue`.
+        Handles responses, notifications, and ignores server-to-client requests.
         """
         logger.debug("Starting LSP message reader loop.")
         try:
@@ -242,32 +310,78 @@ class LeanLspClient:
                         logger.warning("Message reader received None, likely connection closed or parse error. Exiting loop.")
                     break # Exit loop if read fails or connection closes
 
-                if 'id' in message: # It's a response or error response
-                    request_id = int(message['id'])
-                    if request_id in self._pending_requests:
-                        future = self._pending_requests.pop(request_id)
-                        if not future.cancelled():
-                            if 'error' in message:
-                                future.set_exception(LspResponseError(message['error']))
+                msg_id = message.get('id')
+                msg_method = message.get('method')
+
+                # --- Case 1: Response to our request ---
+                # Has 'id', does NOT have 'method'. Our client uses integer IDs.
+                if msg_id is not None and msg_method is None:
+                    try:
+                        request_id = int(msg_id) # Convert expected integer ID
+                        if request_id in self._pending_requests:
+                            future = self._pending_requests.pop(request_id)
+                            if not future.cancelled():
+                                if 'error' in message:
+                                    logger.debug(f"Received error response for ID {request_id}")
+                                    future.set_exception(LspResponseError(message['error']))
+                                else:
+                                    logger.debug(f"Received result response for ID {request_id}")
+                                    future.set_result(message.get('result'))
                             else:
-                                future.set_result(message.get('result'))
+                                 logger.warning(f"Received response for already cancelled request ID {request_id}")
                         else:
-                             logger.warning(f"Received response for already cancelled request ID {request_id}")
-                    else:
-                        logger.warning(f"Received unexpected response for ID {request_id}")
-                elif 'method' in message: # It's a notification or request from server
-                    # We only care about notifications for now
-                    if 'id' not in message:
-                        logger.debug(f"Received notification: {message['method']}")
+                            # Could be a response to a request that already timed out/cancelled, or unexpected
+                            logger.warning(f"Received response for ID {request_id}, but it was not pending.")
+                    except ValueError:
+                         # This happens if server sends a response with a non-integer ID, which shouldn't occur if it's replying to us.
+                         logger.warning(f"Received response with non-integer ID '{msg_id}', which was not expected from our requests.")
+                    except Exception as e:
+                         # Catch other potential errors during future handling
+                         logger.exception(f"Error processing response for ID {msg_id}: {e}")
+                         # Ensure future is removed if error occurs during processing
+                         if 'request_id' in locals() and request_id in self._pending_requests:
+                            future = self._pending_requests.pop(request_id)
+                            if not future.done():
+                                future.set_exception(e)
+
+                # --- Case 2: Notification from server ---
+                # Has 'method', does NOT have 'id'.
+                elif msg_method is not None and msg_id is None:
+                    logger.debug(f"Received notification: {msg_method}")
+                    # Handle specific notifications we care about
+                    if msg_method == "textDocument/publishDiagnostics":
+                        diags_data = message.get("params", {}).get("diagnostics", [])
+                        uri = message.get("params", {}).get("uri")
+                        logger.info(f"Received textDocument/publishDiagnostics with {len(diags_data)} diagnostics for URI {uri}.")
+                        logger.debug(f"Diagnostics data (first item snippet): {str(diags_data[0])[:200]}..." if diags_data else "No diagnostics in this message")
+                        logger.debug(f"Queueing publishDiagnostics notification. Queue size approx: {self._notifications_queue.qsize() + 1}")
                         await self._notifications_queue.put(message)
+                    elif msg_method == "$/lean/fileProgress":
+                         # Lean sends progress updates. Log them for debugging if needed.
+                         progress_params = message.get('params', {})
+                         logger.debug(f"Lean File Progress: {progress_params}")
+                         # Optionally put on queue if needed downstream: await self._notifications_queue.put(message)
                     else:
-                         logger.warning(f"Received unexpected request from server (ignoring): {message}")
+                         logger.debug(f"Ignoring unhandled notification: {msg_method}")
+
+                # --- Case 3: Request from server ---
+                # Has 'method' AND 'id'. The server wants US to do something.
+                elif msg_method is not None and msg_id is not None:
+                    # This is where 'register_lean_watcher' likely falls.
+                    logger.warning(f"Received unexpected request from server (Method: {msg_method}, ID: {msg_id}). Ignoring.")
+                    # For this tool's purpose, we don't need to respond to server requests.
+                    # A fully compliant client might send back a MethodNotFound error response.
+
+                # --- Case 4: Unknown message structure ---
                 else:
                     logger.warning(f"Received message with unknown structure: {message}")
+
         except asyncio.CancelledError:
             logger.info("LSP message reader loop cancelled.")
         except Exception as e:
-            logger.exception(f"Unexpected error in LSP message reader loop: {e}")
+            # Log unexpected errors in the loop itself
+            if not self._closed: # Avoid logging errors during graceful shutdown
+                 logger.exception(f"Unexpected error in LSP message reader loop: {e}")
         finally:
             logger.info("LSP message reader loop finished.")
             # Cancel any remaining pending requests when the loop exits
@@ -582,11 +696,13 @@ class LeanLspClient:
         """Retrieves diagnostic notifications received from the server.
 
         Checks the internal queue for 'textDocument/publishDiagnostics' messages.
-        This is non-blocking beyond the short timeout if the queue is empty.
+        It attempts to drain the queue using small timeouts.
 
         Args:
-            timeout (Optional[float]): Max time to wait for a message if queue is empty.
-                                        Defaults to 0.1s. Use 0 for immediate check.
+            timeout (Optional[float]): Initial timeout to wait for the first message
+                                        if the queue might be initially empty.
+                                        Defaults to 0.1s. Subsequent checks use
+                                        a near-zero timeout to drain quickly.
 
         Returns:
             List[Dict[str, Any]]: A list of diagnostic objects received since the
@@ -594,30 +710,52 @@ class LeanLspClient:
             contains 'range', 'severity', 'message', etc.
         """
         diagnostics = []
-        try:
-             while True: # Drain the queue quickly
-                 notification = await asyncio.wait_for(self._notifications_queue.get(), timeout=timeout)
-                 if notification.get("method") == "textDocument/publishDiagnostics":
-                      # Could add filtering by URI here if managing multiple documents
-                      # params = notification.get("params", {})
-                      # doc_uri = params.get("uri")
-                      # if doc_uri == self.target_uri: ...
-                      diags = notification.get("params", {}).get("diagnostics", [])
-                      logger.debug(f"Retrieved {len(diags)} diagnostics from queue.")
-                      diagnostics.extend(diags)
-                 else:
-                      # Handle other potentially interesting notifications if needed in the future
-                      logger.debug(f"Ignoring notification in get_diagnostics: {notification.get('method')}")
-                 self._notifications_queue.task_done()
-                 # Reset timeout after finding one message? Or keep draining fast? Drain fast.
-                 timeout = 0 # Check rest of queue immediately
-        except (asyncio.TimeoutError, asyncio.QueueEmpty):
-             pass # Expected when queue is empty
-        except Exception as e:
-             logger.error(f"Error getting diagnostics from queue: {e}")
+        first_attempt = True
+        # Use a very small timeout for draining attempts after the first
+        drain_timeout = 0.01
 
+        logger.debug(f"Entering get_diagnostics. Approx queue size: {self._notifications_queue.qsize()}")
+
+        while True:
+            current_timeout = timeout if first_attempt else drain_timeout
+            first_attempt = False # Use drain_timeout for subsequent attempts
+
+            try:
+                # Wait for an item with the current timeout
+                notification = await asyncio.wait_for(
+                    self._notifications_queue.get(),
+                    timeout=current_timeout
+                )
+                logger.debug(f"Retrieved notification from queue: method='{notification.get('method')}'")
+
+                if notification.get("method") == "textDocument/publishDiagnostics":
+                    # Could add filtering by URI here if managing multiple documents
+                    # params = notification.get("params", {})
+                    # doc_uri = params.get("uri")
+                    # if doc_uri == self.target_uri: ...
+                    diags = notification.get("params", {}).get("diagnostics", [])
+                    logger.debug(f"Retrieved {len(diags)} diagnostics from notification.")
+                    if diags: # Log content snippet only if diagnostics are present
+                        logger.debug(f"Diagnostic content (first item snippet): {str(diags[0])[:200]}...")
+                    else:
+                        logger.debug("No diagnostic items within this notification.")
+                    diagnostics.extend(diags)
+                else:
+                    # Handle other potentially interesting notifications if needed in the future
+                    logger.debug(f"Ignoring notification type during diagnostic collection: {notification.get('method')}")
+
+                self._notifications_queue.task_done()
+
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                # This is the expected way to exit the loop when the queue is empty
+                logger.debug(f"Queue appears empty (timeout={current_timeout}s). Exiting diagnostic collection loop.")
+                break
+            except Exception as e:
+                logger.error(f"Error getting diagnostics from queue: {e}", exc_info=True)
+                break # Exit loop on unexpected errors
+
+        logger.debug(f"Exiting get_diagnostics. Total collected: {len(diagnostics)}")
         return diagnostics
-
 
 class LspResponseError(Exception):
     """Custom exception for LSP error responses."""
@@ -633,32 +771,44 @@ async def analyze_lean_failure(
     lean_code: str,
     lean_executable_path: str,
     cwd: str,
-    timeout_seconds: int = DEFAULT_LSP_TIMEOUT,
+    shared_lib_path: Optional[pathlib.Path],
+    timeout_seconds: int = DEFAULT_LSP_TIMEOUT, # Used for goal requests
     fallback_error: str = "LSP analysis failed."
 ) -> str:
     """
-    Analyzes failing Lean code using LSP to generate an annotated error log.
+    Analyzes failing Lean code using LSP. It waits for initial diagnostics,
+    then annotates the code with single-line goal states line-by-line (skipping empty lines),
+    and finally appends sections for both reported LSP diagnostics and the original
+    build failure message.
 
     Args:
-        lean_code (str): The Lean code snippet that failed lake build.
+        lean_code (str): The Lean code string to analyze.
         lean_executable_path (str): Path to the 'lean' executable.
-        cwd (str): The directory context in which lean --server should run.
-             This should be the temporary project directory where lake build failed.
-        timeout_seconds (int): Timeout for individual LSP request/response operations.
-        fallback_error (str): Error message to include if LSP analysis fails.
+        cwd (str): Working directory for the lean server process (temp project).
+        shared_lib_path (Optional[pathlib.Path]): Path to the root of the shared library dependency.
+        timeout_seconds (int): Timeout for individual LSP requests (like get_goal).
+        fallback_error (str): Error message (typically lake build output) to include.
 
     Returns:
-        str: An annotated string containing code lines, goal states, and the LSP error,
-             or a fallback error message if LSP analysis fails.
+        str: Annotated Lean code with goals, LSP diagnostics, and the build error.
     """
-    client = LeanLspClient(lean_executable_path, cwd, timeout=timeout_seconds)
+    # Use a longer overall timeout for the client's internal waits if needed
+    client_timeout = max(timeout_seconds, 60) # Give client reasonable time for internal waits
+    client = LeanLspClient(
+        lean_executable_path,
+        cwd,
+        timeout=client_timeout, # Use longer timeout for client internals
+        shared_lib_path=shared_lib_path
+    )
     annotated_lines: List[str] = []
-    processed_ok = False
+    analysis_succeeded = False # Track if the main analysis logic completes
+    collected_diagnostics: List[Dict[str, Any]] = [] # Store all diagnostics here
+    diagnostics_by_line: Dict[int, List[str]] = defaultdict(list) # For inline diagnostics
+
     # Use a consistent temporary filename within the CWD for the URI
     temp_filename = "temp_analysis_file.lean"
     temp_file_path = pathlib.Path(cwd) / temp_filename
     temp_file_uri = temp_file_path.as_uri()
-    # We don't actually need to write the file to disk for LSP didOpen
 
     try:
         await client.start_server()
@@ -667,138 +817,163 @@ async def analyze_lean_failure(
         stripped_code = strip_lean_comments(lean_code)
         code_lines = stripped_code.splitlines()
 
+        # Use the stripped code for analysis with LSP
         await client.did_open(temp_file_uri, "lean", 1, stripped_code)
         logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri}")
 
-        # Short pause to allow server to process didOpen and potentially send initial diagnostics
-        await asyncio.sleep(0.8) # Adjust pause as needed
+        # --- Step 1: Wait for initial server processing ---
+        initial_wait_seconds = 10.0 # Wait longer for server to process and send diagnostics
+        logger.info(f"Waiting {initial_wait_seconds}s for initial server processing & diagnostics...")
+        await asyncio.sleep(initial_wait_seconds)
 
-        last_successful_goal_str = "Initial state (no goal requested)"
-        found_error_diagnostic = None
-        error_line_index = -1
+        # --- Step 2: Collect All Available Diagnostics ---
+        # Use a shorter timeout here as we expect diagnostics might already be queued
+        diagnostic_collection_timeout = 5.0
+        logger.info(f"Collecting all available diagnostics (timeout={diagnostic_collection_timeout}s)...")
+        collected_diagnostics = await client.get_diagnostics(timeout=diagnostic_collection_timeout)
+        logger.info(f"Collected {len(collected_diagnostics)} diagnostics initially.")
+        if collected_diagnostics:
+             logger.debug(f"Collected diagnostics sample (first): {str(collected_diagnostics[0])[:300]}...")
 
+             # --- Pre-process diagnostics for inline insertion ---
+             logger.debug(f"Preprocessing {len(collected_diagnostics)} diagnostics for inline reporting...")
+             formatted_diags_count = 0
+             seen_diags = set()
+             for diag in collected_diagnostics:
+                 # Create a unique tuple signature for the diagnostic
+                 diag_sig = (
+                     diag.get("severity"),
+                     diag.get("range", {}).get("start", {}).get("line"),
+                     diag.get("range", {}).get("start", {}).get("character"),
+                     diag.get("range", {}).get("end", {}).get("line"),
+                     diag.get("range", {}).get("end", {}).get("character"),
+                     diag.get("message")
+                 )
+                 if diag_sig in seen_diags:
+                     continue # Skip duplicate
+                 seen_diags.add(diag_sig)
+
+                 severity_map = {1: "Error", 2: "Warning", 3: "Info", 4: "Hint"}
+                 severity = severity_map.get(diag.get("severity", 0), "Unknown")
+                 message = diag.get("message", "Unknown Lean diagnostic.")
+                 diag_range = diag.get("range", {})
+                 start_pos = diag_range.get("start", {})
+                 start_line_idx = start_pos.get("line", -1) # 0-based index for dictionary key
+
+                 if start_line_idx != -1:
+                     # Use 1-based indexing for user-friendly output string
+                     start_line_disp = start_line_idx + 1
+                     start_char_disp = start_pos.get("character", -1) + 1
+                     end_pos = diag_range.get("end", {})
+                     end_line_disp = end_pos.get("line", -1) + 1
+                     end_char_disp = end_pos.get("character", -1) + 1
+
+                     # Format the diagnostic message
+                     diag_log_line = (f"-- {severity}: (Reported for L{start_line_disp}:{start_char_disp}"
+                                      f"-L{end_line_disp}:{end_char_disp}): {message}")
+                     diagnostics_by_line[start_line_idx].append(diag_log_line)
+                     formatted_diags_count += 1
+             logger.info(f"Processed {formatted_diags_count} unique diagnostics into line map.")
+
+
+        # --- Step 3: Annotate with Goals and Inline Diagnostics ---
+        logger.info("Starting line-by-line goal annotation and diagnostic insertion...")
         for i, line_content in enumerate(code_lines):
-            # 1. Query Goal State *before* this line
-            current_goal_str = "Error: Could not retrieve goal state" # Default msg
-            try:
-                # Position is start of the current line (line i, char 0)
-                goal_result = await client.get_goal(temp_file_uri, line=i, character=0)
+            goal_added_for_line = False # Flag to track if goal was added
+            # Query goal ONLY if the line has content
+            if line_content.strip():
+                current_goal_str = "Error: Could not retrieve goal state" # Default msg
+                try:
+                    goal_result = await asyncio.wait_for(
+                        client.get_goal(temp_file_uri, line=i, character=0),
+                        timeout=timeout_seconds
+                    )
+                    # --- Parse Goal Result (same as previous version) ---
+                    if goal_result and isinstance(goal_result, dict):
+                         if "rendered" in goal_result: current_goal_str = goal_result["rendered"].strip()
+                         elif "plainGoal" in goal_result: current_goal_str = goal_result["plainGoal"].strip()
+                         elif "goals" in goal_result and isinstance(goal_result["goals"], list) and goal_result["goals"]:
+                             current_goal_str = f"{len(goal_result['goals'])} goal(s): " + " | ".join([g.get('rendered', str(g)).replace('\n', ' ') for g in goal_result['goals']]) # Join multiple goals inline
+                         else: current_goal_str = f"Goal state fmt unknown: {str(goal_result)[:300]}"
+                    elif isinstance(goal_result, str): current_goal_str = goal_result.strip()
+                    elif goal_result is not None: current_goal_str = f"Unexpected goal result type: {str(goal_result)[:100]}"
+                    else: current_goal_str = "No goal state reported"
 
-                # --- Parse Goal Result ---
-                # This parsing logic needs validation against your Lean version's LSP output.
-                if goal_result and isinstance(goal_result, dict):
-                     if "rendered" in goal_result:
-                          current_goal_str = goal_result["rendered"].strip()
-                     elif "plainGoal" in goal_result:
-                          current_goal_str = goal_result["plainGoal"].strip()
-                     elif "goals" in goal_result and isinstance(goal_result["goals"], list) and goal_result["goals"]:
-                          first_goal = goal_result["goals"][0]
-                          if "rendered" in first_goal: current_goal_str = first_goal["rendered"].strip()
-                          elif "goalState" in first_goal: current_goal_str = first_goal["goalState"].strip()
-                          else: current_goal_str = f"Goal 1/{len(goal_result['goals'])} fmt unknown: {str(first_goal)[:100]}"
-                     else: current_goal_str = f"Goal state fmt unknown: {str(goal_result)[:100]}"
-                elif isinstance(goal_result, str):
-                    current_goal_str = goal_result.strip()
-                elif goal_result is not None:
-                    current_goal_str = f"Unexpected goal result type: {str(goal_result)[:100]}"
-                else:
-                     current_goal_str = "No goal state reported" # Goal query returned None
+                    if not current_goal_str.strip() or "no goals" in current_goal_str.lower():
+                        current_goal_str = "goals accomplished"
 
-                # Standardize 'no goals' message
-                if not current_goal_str.strip() or "no goals" in current_goal_str.lower():
-                    current_goal_str = "goals accomplished"
+                except asyncio.TimeoutError:
+                     logger.error(f"Timeout ({timeout_seconds}s) retrieving goal state before line {i+1}")
+                     current_goal_str = "Error: Timeout retrieving goal state"
+                except Exception as goal_e:
+                    logger.error(f"Error retrieving goal state before line {i+1}: {goal_e}", exc_info=True)
+                    current_goal_str = f"Error retrieving goal: {goal_e}"
 
-            except asyncio.TimeoutError:
-                 logger.error(f"Timeout retrieving goal state before line {i+1}")
-                 current_goal_str = "Error: Timeout retrieving goal state"
-            # Catch other exceptions during goal retrieval
-            except Exception as goal_e:
-                logger.error(f"Error retrieving goal state before line {i+1}: {goal_e}")
-                # current_goal_str keeps default error message
+                # Remove markdown fences and strip whitespace
+                cleaned_goal_str = current_goal_str.strip()
+                if cleaned_goal_str.startswith("```lean"):
+                    cleaned_goal_str = cleaned_goal_str.removeprefix("```lean").strip()
+                if cleaned_goal_str.endswith("```"):
+                    cleaned_goal_str = cleaned_goal_str.removesuffix("```").strip()
 
-            annotated_lines.append(f"-- Goal: {current_goal_str}")
-            last_successful_goal_str = current_goal_str # Store goal before the line
+                # Replace newlines with "; " for single-line output
+                single_line_goal = cleaned_goal_str.replace('\n', '; ')
 
-            # 2. Append the code line itself
-            annotated_lines.append(line_content)
+                # Add the single-line goal comment
+                goal_comment_line = f"-- Goal: {single_line_goal}"
+                annotated_lines.append(goal_comment_line)
+                goal_added_for_line = True
 
-            # 3. Check for diagnostics reported for this line index 'i'
-            await asyncio.sleep(0.1) # Brief pause for server reaction/diagnostic dispatch
-            diagnostics = await client.get_diagnostics(timeout=0.2)
+                # Always append the original code line content
+                annotated_lines.append(line_content)
 
-            for diag in diagnostics:
-                diag_range = diag.get("range", {})
-                diag_start = diag_range.get("start")
-                if not isinstance(diag_start, dict): continue
-                diag_line = diag_start.get("line") # 0-based line number
-                severity = diag.get("severity", 0) # 1: Error
+                if i in diagnostics_by_line:
+                    annotated_lines.extend(diagnostics_by_line[i])
 
-                # Check if it's an Error diagnostic *starting* on the current line
-                if diag_line == i and severity == 1:
-                    error_message = diag.get("message", "Unknown Lean error.")
-                    logger.warning(f"Found error originating on line {i+1}: {error_message}")
-                    found_error_diagnostic = error_message
-                    error_line_index = i
-                    # Add the error message immediately after the failing line
-                    annotated_lines.append(f"-- Error: {error_message}")
-                    break # Stop processing lines after finding first error on this line
+        logger.info("Finished line-by-line goal annotation and diagnostic insertion.")
 
-            if found_error_diagnostic:
-                break # Exit outer loop (line iteration) as well
-
-        # Check for errors reported after iterating through all lines
-        if not found_error_diagnostic:
-             logger.info("Completed line iteration without finding line-specific error. Checking final diagnostics.")
-             await asyncio.sleep(0.2) # Final check
-             diagnostics = await client.get_diagnostics(timeout=0.2)
-             for diag in diagnostics:
-                 severity = diag.get("severity", 0)
-                 if severity == 1: # Found any error at all
-                      diag_range = diag.get("range", {})
-                      diag_start = diag_range.get("start")
-                      if not isinstance(diag_start, dict): continue
-                      diag_line = diag_start.get("line", -1)
-                      error_message = diag.get("message", "Unknown Lean error.")
-                      logger.warning(f"Found error after processing all lines (reported for line {diag_line+1}): {error_message}")
-                      # Append error at the end; less precise but better than nothing
-                      annotated_lines.append(f"-- Error: (Reported at end for line ~{diag_line+1}): {error_message}")
-                      found_error_diagnostic = error_message # Mark error as found
-                      break
-
-        processed_ok = True # Indicate processing loop completed/exited cleanly
+        analysis_succeeded = True # Mark that the main analysis part finished
 
     except ConnectionError as e:
         logger.error(f"LSP Connection Error during analysis: {e}")
         annotated_lines.append(f"-- Error: LSP Connection Failed: {e}")
     except asyncio.TimeoutError as e:
-         logger.error(f"LSP Timeout Error during analysis: {e}")
+         logger.error(f"LSP Overall Timeout Error during analysis (e.g., initialize): {e}")
          annotated_lines.append(f"-- Error: LSP Timeout: {e}")
     except Exception as e:
-        logger.exception(f"Unhandled exception during LSP analysis: {e}")
+        logger.exception(f"Unhandled exception during LSP analysis setup or goal loop: {e}")
         annotated_lines.append(f"-- Error: Unexpected analysis failure: {e}")
     finally:
-        # Ensure server shutdown/cleanup happens regardless of errors
         if client:
             try:
-                # Attempt graceful shutdown first
                 await client.shutdown()
                 await client.exit()
             except Exception as shutdown_e:
                  logger.warning(f"Error during graceful shutdown/exit (forcing close): {shutdown_e}")
-            finally: # Ensure close runs even if shutdown/exit fail
-                 await client.close() # Forcefully closes and terminates
+            finally:
+                 await client.close()
 
-    # Construct final output string based on outcome
-    if processed_ok and found_error_diagnostic:
-        # LSP analysis ran and found an error. Return the annotated lines.
-        return "\n".join(annotated_lines)
-    elif processed_ok and not found_error_diagnostic:
-         # LSP analysis ran but found no errors (contradicts initial lake build failure).
-         logger.warning("LSP analysis completed without finding errors, but lake build failed.")
-         # Return the stripped code and the original fallback error for context.
-         return f"-- LSP analysis completed without reporting errors. --\n{strip_lean_comments(lean_code)}\n-- Original Failure Report --\n{fallback_error}"
-    else:
-        # LSP analysis itself failed (e.g., connection, timeout, unexpected exception).
+    # --- Step 4 & 5: Append ONLY Build Error (LSP Diags are inline) ---
+    final_output_lines = annotated_lines # Start with the annotated code + inline diags
+
+    # Section for Original Build Failure Report (Fallback Error) - Always include if analysis ran
+    if analysis_succeeded:
+        final_output_lines.append("\n-- Build System Output (lake build) --")
+        if fallback_error and fallback_error != "LSP analysis failed.":
+            fallback_lines = ["--   " + line for line in fallback_error.strip().splitlines()]
+            final_output_lines.extend(fallback_lines)
+        else:
+            final_output_lines.append("-- (Build system output not provided or analysis failed internally)")
+
+    else: # Analysis itself failed
         logger.error("LSP analysis process failed or was incomplete.")
-        # Return whatever annotations were gathered plus the original fallback error.
-        return f"-- LSP Analysis Incomplete --\n" + "\n".join(annotated_lines) + f"\n-- Original Failure Report --\n{fallback_error}"
+        failure_header = "-- LSP Analysis Incomplete --"
+        final_output_lines.insert(0, failure_header)
+        final_output_lines.append("\n-- Original Build System Output (lake build) --")
+        if fallback_error and fallback_error != "LSP analysis failed.":
+             fallback_lines = ["--   " + line for line in fallback_error.strip().splitlines()]
+             final_output_lines.extend(fallback_lines)
+        else:
+             final_output_lines.append("-- (Build system output not provided or analysis failed internally)")
+
+    return "\n".join(final_output_lines)
