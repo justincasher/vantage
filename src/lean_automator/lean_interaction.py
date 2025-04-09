@@ -9,10 +9,7 @@ items (`KBItem`). It defines functions to:
 - Execute `lake build` commands asynchronously.
 - Update a persistent shared Lean library with successfully verified code.
 - Manage database status updates based on validation outcomes.
-
-Configuration relies on environment variables like `LEAN_AUTOMATOR_SHARED_LIB_PATH`
-for the location of the persistent shared library's root directory and optionally
-`LEAN_AUTOMATOR_LAKE_CACHE` for caching.
+- **On validation failure, uses lean_lsp_analyzer to generate detailed error logs.**
 """
 
 import asyncio
@@ -57,6 +54,19 @@ except ImportError:
      async def save_kb_item(*args: Any, **kwargs: Any) -> None: pass # type: ignore
      DEFAULT_DB_PATH = 'knowledge_base.sqlite' # Define dummy default
      # raise # Or re-raise the error if preferred
+
+# --- Import the new LSP analyzer ---
+try:
+    from .lean_lsp_analyzer import analyze_lean_failure
+except ImportError:
+     print("Error: Failed to import lean_lsp_analyzer.", file=sys.stderr)
+     # Define a dummy async function if import fails, to allow loading
+     async def analyze_lean_failure(*args: Any, **kwargs: Any) -> str: # type: ignore
+          logger.error("lean_lsp_analyzer.analyze_lean_failure is unavailable!")
+          fallback = kwargs.get('fallback_error', 'LSP analyzer unavailable.')
+          return f"-- LSP Analysis Skipped (Import Error) --\n{fallback}"
+     # raise # Or re-raise the error if preferred
+
 
 # --- Logging Configuration ---
 # Configure logging level using the LOGLEVEL environment variable (common practice).
@@ -234,6 +244,7 @@ package _{temp_lib_name.lower()}_project where
   -- package configuration options
 
 -- Define the temporary library within the package
+@[default_target] -- Add default target for convenience?
 lean_lib {temp_lib_name} where
   -- library configuration options
 """
@@ -347,7 +358,7 @@ async def _update_persistent_library(
         lean_file_rel = module_path_rel.with_suffix('.lean')
         # Destination path is relative to the shared library's *source directory* (hardcoded name)
         # Example: /path/to/shared/VantageLib/My/Module.lean
-        dest_file_abs = shared_lib_path / lean_file_rel
+        dest_file_abs = shared_lib_path / SHARED_LIB_SRC_DIR_NAME / lean_file_rel # <--- Corrected path construction
         logger.debug(f"Destination path in persistent library: {dest_file_abs}")
     except ValueError as e:
         logger.error(f"Invalid module name '{item.unique_name}'. Cannot determine persistent path: {e}")
@@ -380,7 +391,8 @@ async def _update_persistent_library(
     # 3. Trigger 'lake build' within the persistent library directory
     # We build the specific module that was just added/updated.
     # The target name needs to be fully qualified relative to the package root.
-    target_build_name = item.unique_name
+    # Example: Build target "VantageLib.My.Module" if SHARED_LIB_SRC_DIR_NAME is VantageLib
+    target_build_name = f"{SHARED_LIB_SRC_DIR_NAME}.{item.unique_name}"
 
     command = [lake_executable_path, 'build', target_build_name]
     logger.info(f"Triggering persistent library build: {' '.join(command)} in {shared_lib_path}")
@@ -407,7 +419,7 @@ async def _update_persistent_library(
         # Run the potentially blocking subprocess in an executor thread
         lake_process_result = await loop.run_in_executor(None, functools.partial(subprocess.run, **run_args))
 
-        # Logging after the subprocess call (unconditionally) 
+        # Logging after the subprocess call (unconditionally)
         stdout_output = lake_process_result.stdout or ""
         stderr_output = lake_process_result.stderr or ""
         log_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}"
@@ -456,16 +468,20 @@ async def check_and_compile_item(
         library package (identified by SHARED_LIB_PACKAGE_NAME) using its path
         (LEAN_AUTOMATOR_SHARED_LIB_PATH). It runs `lake build` within this
         temporary environment.
-        
-    2.  **Persistent Update:** If the temporary verification succeeds (build completes
-        with exit code 0), the function writes the item's source code to the
-        correct directory within the persistent shared library (using
-        SHARED_LIB_SRC_DIR_NAME) and runs `lake build` within the root of *that*
-        library project to integrate the new item.
+
+    2.  **LSP Analysis (on Failure):** If the temporary verification fails,
+        it uses `lean_lsp_analyzer.analyze_lean_failure` to generate a detailed,
+        annotated error log including goal states.
+
+    3.  **Persistent Update (on Success):** If the temporary verification succeeds,
+        the function writes the item's source code to the correct directory within
+        the persistent shared library (using SHARED_LIB_SRC_DIR_NAME) and runs
+        `lake build` within the root of *that* library project to integrate the new item.
 
     Updates the `KBItem` status in the database to `PROVEN` upon successful
-    verification and persistent update, `LEAN_VALIDATION_FAILED` if the temporary
-    verification fails, or `ERROR` for configuration or unexpected issues.
+    verification and persistent update, `LEAN_VALIDATION_FAILED` (with the detailed
+    LSP-generated log) if temporary verification fails, or `ERROR` for configuration
+    or unexpected issues.
 
     Args:
         unique_name (str): The unique name of the KBItem to check and compile.
@@ -475,7 +491,8 @@ async def check_and_compile_item(
         lake_executable_path (str): The path to the `lake` command-line tool.
             Defaults to 'lake' (assumes it's in the system PATH).
         timeout_seconds (int): Timeout duration in seconds for each `lake build`
-            subprocess execution (both temporary and persistent). Defaults to 120.
+            subprocess execution (both temporary and persistent). Also used as a
+            base for LSP analysis timeout. Defaults to 120.
 
     Returns:
         Tuple[bool, str]: A tuple containing:
@@ -484,9 +501,9 @@ async def check_and_compile_item(
               even if the subsequent persistent library update fails (which will
               be logged as a warning).
             - str: A message describing the outcome (e.g., "Lean code verified.",
-              "Lean validation failed.", "Configuration error.", "Timeout.",
-              "Warning: Persistent library update failed."). Includes error details
-              or status updates where applicable.
+              "Lean validation failed (LSP analysis attempted).", "Configuration error.",
+              "Timeout.", "Warning: Persistent library update failed."). Includes
+              error details or status updates where applicable.
     """
     logger.info(f"Starting Lean validation process for: {unique_name} using shared library.")
     effective_db_path = db_path or DEFAULT_DB_PATH
@@ -511,19 +528,26 @@ async def check_and_compile_item(
              msg = f"Target item '{unique_name}' has no lean_code to compile."
              logger.error(msg)
              try:
-                 target_item.update_status(ItemStatus.ERROR, "Missing lean_code for compilation.")
-                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 # Ensure target_item exists before calling update_status
+                 fetched_item_for_status = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+                 if fetched_item_for_status:
+                      fetched_item_for_status.update_status(ItemStatus.ERROR, "Missing lean_code for compilation.")
+                      await save_kb_item(fetched_item_for_status, client=None, db_path=effective_db_path)
+                 else: # If it disappeared somehow
+                      logger.error(f"Cannot update status for missing item {unique_name}")
              except Exception as db_err: logger.error(f"Failed to update status for item missing code: {db_err}")
              return False, msg
         logger.info(f"Fetched target item {unique_name} for validation.")
 
     except Exception as e:
         logger.exception(f"Unexpected error fetching target item {unique_name}: {e}")
-        if target_item and isinstance(target_item, KBItem):
-            try:
-                target_item.update_status(ItemStatus.ERROR, f"Unexpected fetch error: {e}")
-                await save_kb_item(target_item, client=None, db_path=effective_db_path)
-            except Exception as db_err: logger.error(f"Failed to update status after fetch error: {db_err}")
+        # Try to update status if possible
+        try:
+            fetched_item_for_status = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+            if fetched_item_for_status:
+                 fetched_item_for_status.update_status(ItemStatus.ERROR, f"Unexpected fetch error: {str(e)[:500]}")
+                 await save_kb_item(fetched_item_for_status, client=None, db_path=effective_db_path)
+        except Exception as db_err: logger.error(f"Failed to update status after fetch error: {db_err}")
         return False, f"Unexpected error fetching target: {e}"
 
     # --- Create Temporary Environment ---
@@ -546,7 +570,7 @@ async def check_and_compile_item(
 
     except (ValueError, OSError, TypeError) as e:
          logger.error(f"Failed to create temporary verification environment for {unique_name}: {e}")
-         if target_item:
+         if target_item: # Use the already fetched item if available
              try:
                  target_item.update_status(ItemStatus.ERROR, f"Verification env creation error: {str(e)[:500]}")
                  await save_kb_item(target_item, client=None, db_path=effective_db_path)
@@ -582,19 +606,33 @@ async def check_and_compile_item(
 
     # --- Execute Lake Build (Temporary Verification) ---
     try:
+        # Setup environment (mostly unchanged, LEAN_PATH logic can stay)
         subprocess_env = os.environ.copy()
         std_lib_path = None
         lean_executable_path_obj = None
+        # Determine lean executable path (needed for both stdlib detection and potential LSP call)
         try:
             lean_executable_path_obj = pathlib.Path(lake_executable_path).resolve()
             lean_exe_candidate = lean_executable_path_obj.parent / 'lean'
-            lean_exe = str(lean_exe_candidate) if lean_exe_candidate.is_file() else 'lean'
+            # Use async check for lean_exe_candidate
+            if await loop.run_in_executor(None, lean_exe_candidate.is_file):
+                 lean_exe = str(lean_exe_candidate)
+            else:
+                 # Fallback to checking PATH if not found relative to lake
+                 lean_exe_from_path = await loop.run_in_executor(None, shutil.which, 'lean')
+                 if lean_exe_from_path:
+                      lean_exe = lean_exe_from_path
+                      logger.info(f"Using 'lean' executable found in PATH: {lean_exe}")
+                 else:
+                      logger.warning(f"Could not find 'lean' relative to '{lake_executable_path}' or in PATH. Assuming 'lean'.")
+                      lean_exe = 'lean' # Last resort default
         except Exception as path_err:
             logger.warning(f"Could not resolve lean executable path from lake path '{lake_executable_path}': {path_err}. Assuming 'lean' is in PATH.")
             lean_exe = 'lean'
 
-        if lean_exe == 'lean' and not shutil.which('lean'):
-             logger.warning("Could not find 'lean' executable relative to lake or in PATH. Cannot detect stdlib path.")
+        # Stdlib detection using the determined lean_exe
+        if lean_exe == 'lean' and not await loop.run_in_executor(None, shutil.which, 'lean'):
+             logger.warning("Could not find 'lean' executable. Cannot detect stdlib path.")
         else:
             try:
                 logger.debug(f"Attempting stdlib detection using: {lean_exe} --print-libdir")
@@ -603,7 +641,7 @@ async def check_and_compile_item(
                     capture_output=True, text=True, check=True, timeout=10, encoding='utf-8'
                 ))
                 path_candidate = lean_path_proc.stdout.strip()
-                if path_candidate and pathlib.Path(path_candidate).is_dir():
+                if path_candidate and await loop.run_in_executor(None, pathlib.Path(path_candidate).is_dir):
                     std_lib_path = path_candidate
                     logger.info(f"Detected Lean stdlib path: {std_lib_path}")
                 else:
@@ -611,6 +649,7 @@ async def check_and_compile_item(
             except Exception as e:
                 logger.warning(f"Failed to detect Lean stdlib path via '{lean_exe} --print-libdir': {e}")
 
+        # Fallback stdlib detection (can remain similar)
         if not std_lib_path and lean_executable_path_obj:
             try:
                 toolchain_dir = lean_executable_path_obj.parent.parent
@@ -621,6 +660,7 @@ async def check_and_compile_item(
             except Exception as fallback_e:
                 logger.warning(f"Error during fallback stdlib detection: {fallback_e}")
 
+        # Set LEAN_PATH
         if std_lib_path:
             existing_lean_path = subprocess_env.get('LEAN_PATH')
             separator = os.pathsep
@@ -629,6 +669,7 @@ async def check_and_compile_item(
         else:
             logger.warning("Stdlib path not found. LEAN_PATH will not include it. Build might fail if stdlib needed implicitly.")
 
+        # Lake cache setup (unchanged)
         persistent_cache_path = os.getenv('LEAN_AUTOMATOR_LAKE_CACHE')
         if persistent_cache_path:
             persistent_cache_path_obj = pathlib.Path(persistent_cache_path).resolve()
@@ -641,9 +682,9 @@ async def check_and_compile_item(
         else:
             logger.warning("LEAN_AUTOMATOR_LAKE_CACHE not set. Lake will use default caching.")
 
+        # --- Run Lake Build ---
         command = [lake_executable_path, 'build', target_temp_module_name]
         lake_process_result: Optional[subprocess.CompletedProcess] = None
-        full_output = ""
         logger.info(f"Running verification build: {' '.join(command)} in {temp_project_path_str}")
 
         try:
@@ -656,6 +697,7 @@ async def check_and_compile_item(
             }
             lake_process_result = await loop.run_in_executor(None, functools.partial(subprocess.run, **run_args))
 
+            # Log output regardless of success/failure
             stdout_output = lake_process_result.stdout or ""
             stderr_output = lake_process_result.stderr or ""
             logger.debug(f"Verification build return code: {lake_process_result.returncode}")
@@ -663,48 +705,69 @@ async def check_and_compile_item(
                  logger.debug(f"Verification build stdout:\n{stdout_output}")
             if stderr_output:
                  logger.debug(f"Verification build stderr:\n{stderr_output}")
-            full_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}"
+            # Combine stdout/stderr for potential error logging
+            full_output = f"--- STDOUT ---\n{stdout_output}\n--- STDERR ---\n{stderr_output}".strip()
 
         except subprocess.TimeoutExpired:
             msg = f"Timeout after {timeout_seconds}s during temporary verification build"
             logger.error(f"{msg} for {unique_name}.")
-            if target_item:
-                 target_item.update_status(ItemStatus.ERROR, msg)
-                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
-            return False, msg
+            if target_item: # Check if target_item was fetched successfully earlier
+                 try:
+                      target_item.update_status(ItemStatus.ERROR, msg)
+                      await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 except Exception as db_err: logger.error(f"Failed to update status after timeout: {db_err}")
+            return False, msg # Return timeout error
         except FileNotFoundError:
              msg = f"Lake executable not found at '{lake_executable_path}'"
              logger.error(msg)
+             if target_item:
+                 try:
+                     target_item.update_status(ItemStatus.ERROR, msg)
+                     await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 except Exception as db_err: logger.error(f"Failed to update status after FileNotFoundError: {db_err}")
              return False, msg
         except Exception as e:
             msg = f"Subprocess execution error during verification build: {e}"
             logger.exception(f"Unexpected error running verification build subprocess for {unique_name}: {e}")
             if target_item:
-                 target_item.update_status(ItemStatus.ERROR, msg)
-                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 try:
+                      target_item.update_status(ItemStatus.ERROR, msg)
+                      await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 except Exception as db_err: logger.error(f"Failed to update status after subprocess error: {db_err}")
             return False, msg
 
+        # Check result after potential exceptions
         if not lake_process_result:
              error_msg = "Internal error: Lake process result missing after execution."
              logger.error(error_msg)
              if target_item:
-                  target_item.update_status(ItemStatus.ERROR, error_msg)
-                  await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                  try:
+                       target_item.update_status(ItemStatus.ERROR, error_msg)
+                       await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                  except Exception as db_err: logger.error(f"Failed to update status after internal error: {db_err}")
              return False, error_msg
 
+        # --- Process Lake Build Result ---
         if lake_process_result.returncode == 0:
+            # --- SUCCESS ---
             logger.info(f"Successfully verified {unique_name} in temporary environment.")
+            # Re-fetch item to ensure we have the latest state before updating
             target_item = get_kb_item_by_name(unique_name, db_path=effective_db_path)
             if not target_item:
                  msg = f"Item {unique_name} disappeared from DB after successful verification."
                  logger.error(msg)
-                 return False, msg
+                 return False, msg # Cannot proceed
 
-            target_item.update_status(ItemStatus.PROVEN, error_log=None)
-            await save_kb_item(target_item, client=None, db_path=effective_db_path)
-            logger.info(f"Database status updated to PROVEN for {unique_name}.")
+            try:
+                 target_item.update_status(ItemStatus.PROVEN, error_log=None) # Clear any previous error log
+                 await save_kb_item(target_item, client=None, db_path=effective_db_path)
+                 logger.info(f"Database status updated to PROVEN for {unique_name}.")
+            except Exception as db_err:
+                 logger.error(f"Failed to update DB status to PROVEN for {unique_name}: {db_err}")
+                 # Decide if this should prevent persistent update? Maybe not.
+                 # return False, f"DB Update failed after successful verification: {db_err}"
 
-            # Pass the hardcoded library src dir name determined earlier
+            # --- Update Persistent Library ---
             persist_success = await _update_persistent_library(
                 target_item, SHARED_LIB_PATH,
                 lake_executable_path, timeout_seconds, loop
@@ -715,43 +778,93 @@ async def check_and_compile_item(
                 return True, final_msg
             else:
                 logger.warning(f"Verification succeeded for {unique_name}, BUT failed to update/build persistent library.")
+                # Status remains PROVEN, but we return a warning message
                 final_msg = f"Lean code verified. Status: {ItemStatus.PROVEN.name}. WARNING: Persistent library update failed (see logs)."
+                # Still return True for the verification part itself
                 return True, final_msg
 
-        else: # Verification build failed (return code != 0)
-            final_error_message = full_output.strip() if full_output.strip() else "Unknown Lake build error (no output captured)."
+        else:
+            # --- FAILURE: Trigger LSP Analysis ---
             exit_code = lake_process_result.returncode
+            lake_build_output = full_output if full_output else "Unknown Lake build error (no output captured)."
             logger.warning(f"Lean verification failed for {unique_name}. Exit code: {exit_code}")
-            logger.debug(f"Captured output for failed verification build of {unique_name}:\n{final_error_message[:1000]}...")
+            logger.debug(f"Captured lake build output for {unique_name}:\n{lake_build_output[:1000]}...")
 
-            target_item = get_kb_item_by_name(unique_name, db_path=effective_db_path)
-            if not target_item:
-                msg = f"Item {unique_name} disappeared from DB after failed verification."
+            # Default error log is the lake build output
+            final_error_log = f"Lake build failed (Exit Code: {exit_code}).\n{lake_build_output}"
+
+            # --- Perform LSP Analysis ---
+            try:
+                # Ensure target_item and its lean_code exist before calling analyzer
+                # Re-fetch target_item here to ensure it wasn't modified/deleted elsewhere? Unlikely but safer.
+                current_target_item_state = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+
+                if current_target_item_state and hasattr(current_target_item_state, 'lean_code') and current_target_item_state.lean_code:
+                    logger.info(f"Starting LSP analysis for failed item {unique_name} in {temp_project_path_str}")
+                    # Use a potentially different timeout for LSP? Let's reuse for now.
+                    lsp_timeout = timeout_seconds
+                    final_error_log = await analyze_lean_failure(
+                        lean_code=current_target_item_state.lean_code,
+                        lean_executable_path=lean_exe, # Use derived lean_exe path
+                        cwd=temp_project_path_str,     # Run in the temp dir context
+                        timeout_seconds=lsp_timeout,
+                        fallback_error=lake_build_output # Pass original lake output as fallback
+                    )
+                    logger.info(f"LSP analysis completed for {unique_name}.")
+                elif not current_target_item_state:
+                     logger.error(f"Cannot perform LSP analysis: Item {unique_name} not found in DB after build failure.")
+                     # Keep final_error_log as the original lake build output
+                else:
+                    logger.warning(f"Skipping LSP analysis for {unique_name}: Target item exists but lean_code is missing/empty.")
+                    # Keep final_error_log as the original lake build output
+
+            except Exception as lsp_err:
+                # Log the error from the LSP analysis attempt itself
+                logger.error(f"LSP analysis execution failed for {unique_name}: {lsp_err}", exc_info=True)
+                # Append note about LSP failure to the original lake build output
+                final_error_log = f"Lake build failed (Exit Code: {exit_code}).\n{lake_build_output}\n\n--- LSP Analysis Failed: {lsp_err} ---"
+            # --- End LSP Analysis Step ---
+
+            # --- Update Database with Failure Status and Log ---
+            # Fetch item again *before* updating to avoid potential race conditions if needed
+            target_item_to_update = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+            if not target_item_to_update:
+                msg = f"Item {unique_name} disappeared from DB before status update after failed verification."
                 logger.error(msg)
-                return False, msg
+                # Ensure temp dir cleanup still happens in finally block
+                return False, msg # Cannot update item status
 
-            target_item.update_status(ItemStatus.LEAN_VALIDATION_FAILED, error_log=final_error_message)
-            target_item.increment_failure_count()
-            await save_kb_item(target_item, client=None, db_path=effective_db_path)
-            logger.info(f"Database status updated to LEAN_VALIDATION_FAILED for {unique_name}.")
-            final_msg = f"Lean validation failed (Exit code: {exit_code}). See logs or KBItem error log."
-            return False, final_msg
+            try:
+                target_item_to_update.update_status(ItemStatus.LEAN_VALIDATION_FAILED, error_log=final_error_log)
+                target_item_to_update.increment_failure_count()
+                await save_kb_item(target_item_to_update, client=None, db_path=effective_db_path)
+                logger.info(f"Database status updated to LEAN_VALIDATION_FAILED for {unique_name} with analysis results.")
+                final_msg = f"Lean validation failed (Exit code: {exit_code}). LSP analysis attempted. See KBItem error log."
+                return False, final_msg
+            except Exception as db_err:
+                 logger.error(f"Failed to update database for {unique_name} after validation failure: {db_err}", exc_info=True)
+                 final_msg = f"Lean validation failed (Exit code: {exit_code}). LSP analysis attempted. DB update failed."
+                 # Still return False, as verification failed.
+                 return False, final_msg
 
     except Exception as e:
          logger.exception(f"Unhandled exception during check_and_compile for {unique_name}: {e}")
-         if target_item and isinstance(target_item, KBItem) and getattr(target_item, 'status', None) != ItemStatus.PROVEN:
-              try:
-                  current_item_state = get_kb_item_by_name(unique_name, db_path=effective_db_path)
-                  if current_item_state and current_item_state.status != ItemStatus.PROVEN:
-                      current_item_state.update_status(ItemStatus.ERROR, f"Unhandled exception: {str(e)[:500]}")
-                      await save_kb_item(current_item_state, client=None, db_path=effective_db_path)
-              except Exception as db_err:
-                  logger.error(f"Failed to update item status after unhandled exception: {db_err}")
+         # Attempt to update status to ERROR if possible
+         try:
+              current_item_state = get_kb_item_by_name(unique_name, db_path=effective_db_path)
+              if current_item_state and getattr(current_item_state, 'status', None) != ItemStatus.PROVEN:
+                  current_item_state.update_status(ItemStatus.ERROR, f"Unhandled exception: {str(e)[:500]}")
+                  await save_kb_item(current_item_state, client=None, db_path=effective_db_path)
+         except Exception as db_err:
+              logger.error(f"Failed to update item status to ERROR after unhandled exception: {db_err}")
          return False, f"Unhandled exception: {e}"
     finally:
+        # --- Cleanup Temporary Directory ---
         if temp_dir_obj:
             try:
+                # Use run_in_executor for potentially blocking cleanup
                 await loop.run_in_executor(None, temp_dir_obj.cleanup)
                 logger.debug(f"Successfully cleaned up temporary directory: {temp_dir_obj.name}")
             except Exception as cleanup_err:
+                 # Log error but don't prevent function return
                  logger.error(f"Error cleaning up temporary directory {temp_dir_obj.name}: {cleanup_err}")
