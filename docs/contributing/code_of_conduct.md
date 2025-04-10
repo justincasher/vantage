@@ -1,4 +1,4 @@
-# Contributor Covenant Code of Conduct
+# Vantage Community Code of Conduct
 
 ## Our Pledge
 
@@ -33,6 +33,8 @@ Examples of unacceptable behavior include:
 * Public or private harassment
 * Publishing others' private information, such as a physical or email address,
   without their explicit permission
+* Sharing private communications (such as emails, direct messages, etc.) without
+  explicit consent from all parties involved
 * Other conduct which could reasonably be considered inappropriate in a
   professional setting
 
@@ -59,9 +61,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-**justinchadwickasher@gmail.com**.
-All complaints will be reviewed and investigated promptly and fairly.
+reported to the community leader responsible for enforcement (Justin Asher) at
+**justinchadwickasher@gmail.com**. If reporting directly to Justin Asher
+presents a conflict of interest or discomfort, please still reach out, and we
+will work to find an alternative confidential resolution. All complaints will be
+reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
@@ -73,12 +77,11 @@ the consequences for any action they deem in violation of this Code of Conduct:
 
 ### 1. Correction
 
-**Community Impact**: Use of inappropriate language or other behavior deemed
-unprofessional or unwelcome in the community.
+**Community Impact**: Use of inappropriate language or other behavior that conflicts with the community standards of professionalism and welcome.
 
 **Consequence**: A private, written warning from community leaders, providing
 clarity around the nature of the violation and an explanation of why the
-behavior was inappropriate. A public apology may be requested.
+behavior was inappropriate. An apology to the affected parties may be requested.
 
 ### 2. Warning
 
