@@ -12,12 +12,10 @@ number of cycles is reached. It updates the status and content of the KBItem
 in the database accordingly.
 """
 
-import asyncio
-import warnings
 import logging
-import os
 import re
-from typing import Optional, Tuple, List, Dict, Any
+import warnings
+from typing import List, Optional, Tuple
 
 # --- Imports from other project modules ---
 try:
@@ -32,13 +30,13 @@ except ImportError:
 try:
     # Need KBItem definition, DB access functions, Status Enum, ItemType
     from lean_automator.kb.storage import (
-        KBItem,
+        DEFAULT_DB_PATH,
         ItemStatus,
         ItemType,  # Import ItemType
+        KBItem,
+        get_items_by_status,  # Added for batch processing
         get_kb_item_by_name,
         save_kb_item,
-        DEFAULT_DB_PATH,
-        get_items_by_status,  # Added for batch processing
     )
 
     # Need LLM client

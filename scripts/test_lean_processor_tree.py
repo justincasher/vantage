@@ -1,9 +1,10 @@
 # File: scripts/test_lean_processor_tree.py
 
 import asyncio
-import os
 import logging
+import os
 import sys
+
 from dotenv import load_dotenv
 
 # --- Add project root to path to allow imports ---
@@ -17,16 +18,16 @@ if project_root not in sys.path:
 try:
     # Use src prefix if running script directly and src is not installed
     from src.lean_automator.kb import storage as kb_storage
+    from src.lean_automator.kb.storage import ItemStatus, ItemType
     from src.lean_automator.lean import processor as lean_processor
     from src.lean_automator.llm import caller as llm_call
-    from src.lean_automator.kb.storage import ItemType, ItemStatus
 except ImportError:
     # Fallback if running as installed package
     try:
         from lean_automator.kb import storage as kb_storage
+        from lean_automator.kb.storage import ItemStatus, ItemType
         from lean_automator.lean import processor as lean_processor
         from lean_automator.llm import caller as llm_call
-        from lean_automator.kb.storage import ItemType, ItemStatus
     except ImportError as e:
         print(f"Error importing project modules: {e}")
         print(

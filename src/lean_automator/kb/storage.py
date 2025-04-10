@@ -11,19 +11,18 @@ Functionality includes handling text embeddings (stored as BLOBs) associated
 with natural language descriptions and LaTeX statements.
 """
 
-import enum
-import uuid
-import sqlite3
-import json
-import warnings
-import os
 import asyncio
+import enum
+import json
 import logging
-import re
-import numpy as np
-from dataclasses import dataclass, field, asdict
+import sqlite3
+import uuid
+import warnings
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Any, Generator, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
+
+import numpy as np
 
 try:
     from lean_automator.config.loader import APP_CONFIG

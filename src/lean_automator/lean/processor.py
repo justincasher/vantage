@@ -23,13 +23,11 @@ The core logic involves:
 6. Providing batch processing capabilities for items pending Lean processing.
 """
 
-import asyncio
-import warnings
 import logging
-import os
 import re
-from typing import Optional, Tuple, List, Dict, Any
 import time
+import warnings
+from typing import List, Optional
 
 # --- Imports from other project modules ---
 try:
@@ -43,13 +41,13 @@ except ImportError:
 
 try:
     from lean_automator.kb.storage import (
-        KBItem,
+        DEFAULT_DB_PATH,
         ItemStatus,
         ItemType,
+        KBItem,
+        get_items_by_status,
         get_kb_item_by_name,
         save_kb_item,
-        get_items_by_status,
-        DEFAULT_DB_PATH,
     )
     from lean_automator.llm.caller import GeminiClient
 
@@ -1038,7 +1036,7 @@ async def generate_and_verify_lean(
                 if hasattr(item_after_gen, "update_status"):
                     item_after_gen.update_status(
                         ItemStatus.ERROR,
-                        f"LLM output parsing failed on final Lean proof attempt",
+                        "LLM output parsing failed on final Lean proof attempt",
                     )
             await save_kb_item(item_after_gen, client=None, db_path=effective_db_path)
             continue  # Try next attempt
@@ -1046,7 +1044,7 @@ async def generate_and_verify_lean(
         # Log generated code before attempting verification
         logger.info(f"--- LLM Generated Lean Code (Attempt {attempt + 1}) ---")
         logger.info(f"\n{generated_lean_code_from_llm}\n")
-        logger.info(f"--- End LLM Generated Code ---")
+        logger.info("--- End LLM Generated Code ---")
 
         # --- Prepare and Verify Code ---
         # Update item with the latest generated code and set status for verification
@@ -1102,7 +1100,7 @@ async def generate_and_verify_lean(
                 if latest_error_log:
                     logger.warning(f"--- Lean Error Log (Attempt {attempt + 1}) ---")
                     logger.warning(f"\n{latest_error_log}\n")
-                    logger.warning(f"--- End Lean Error Log ---")
+                    logger.warning("--- End Lean Error Log ---")
 
                     # --- Optional: Attempt Automated Proof Repair ---
                     # Check if repair module is available and item code exists
@@ -1155,7 +1153,7 @@ async def generate_and_verify_lean(
                     f"Verification system crashed: {str(verify_err)[:500]}"
                 )
                 item_err_state.update_status(
-                    ItemStatus.ERROR, f"Lean verification system error"
+                    ItemStatus.ERROR, "Lean verification system error"
                 )
                 if hasattr(item_err_state, "lean_error_log"):
                     item_err_state.lean_error_log = err_log_message
@@ -1170,7 +1168,7 @@ async def generate_and_verify_lean(
                         f"--- Lean Error Log (Verification Crash - Attempt {attempt + 1}) ---"
                     )
                     logger.warning(f"\n{item_err_state.lean_error_log}\n")
-                    logger.warning(f"--- End Lean Error Log ---")
+                    logger.warning("--- End Lean Error Log ---")
 
             continue  # Try next LLM attempt
 

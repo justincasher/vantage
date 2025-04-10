@@ -37,11 +37,9 @@ import logging
 import os
 import pathlib
 import re
-import sys
-import uuid
-from typing import Any, Dict, Optional, Tuple, List, AsyncGenerator
-from collections import defaultdict
 import subprocess
+from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
 # --- Logging Configuration ---
 # Configure logging level using the LOGLEVEL environment variable (common practice).
@@ -539,7 +537,7 @@ class LeanLspClient:
 
         try:
             json_body = json.dumps(message).encode("utf-8")
-            header = f"Content-Length: {len(json_body)}\r\n\r\n".encode("utf-8")
+            header = f"Content-Length: {len(json_body)}\r\n\r\n".encode()
 
             # logger.debug(f"LSP Sending: {json.dumps(message, indent=2)}") # Verbose logging
             self.writer.write(header)

@@ -1,36 +1,33 @@
 # File: tests/integration/lean/test_interaction_integration.py
 
-import pytest
 import os
-import sys
 import pathlib
 import shutil
-import time
-import asyncio
 import subprocess
+import sys
+import time
 import warnings
-from unittest.mock import (
-    AsyncMock,
-    MagicMock,
-    call,
-)  # Keep mocks if needed for specific tests
+
+import pytest
 
 # --- Project-Specific Imports ---
 # Adjust path to import from src
 # (Assuming project structure allows this)
 try:
     from lean_automator.kb.storage import (
-        initialize_database,
-        save_kb_item,
-        get_kb_item_by_name,
-        KBItem,
         ItemStatus,
         ItemType,
+        KBItem,
+        get_kb_item_by_name,
+        initialize_database,
+        save_kb_item,
     )
-    from lean_automator.lean.interaction import check_and_compile_item
 
     # Temporarily import internal helper for one test setup
-    from lean_automator.lean.interaction import _generate_imports_for_target
+    from lean_automator.lean.interaction import (
+        _generate_imports_for_target,
+        check_and_compile_item,
+    )
 except ImportError as e:
     print(f"Error importing modules: {e}", file=sys.stderr)
     raise

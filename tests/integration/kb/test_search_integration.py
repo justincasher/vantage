@@ -7,15 +7,14 @@ with a temporary SQLite database populated with test items having pre-defined
 embeddings. Mocks LLM calls for embedding generation.
 """
 
-import pytest
-import os
-import sys
 import asyncio
-import numpy as np
-import pytest_asyncio
-from unittest.mock import MagicMock
-from typing import List, Tuple, Dict, Optional
 import logging
+import os
+from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
+import pytest_asyncio
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -24,17 +23,17 @@ logger = logging.getLogger(__name__)
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
 try:
+    from lean_automator.kb.search import find_similar_items  # async
     from lean_automator.kb.storage import (
-        initialize_database,
-        save_kb_item,  # async
-        get_kb_item_by_name,  # sync
-        get_all_items_with_embedding,  # sync
-        KBItem,
+        EMBEDDING_DTYPE,
         ItemStatus,
         ItemType,
-        EMBEDDING_DTYPE,
+        KBItem,
+        get_all_items_with_embedding,  # sync
+        get_kb_item_by_name,  # sync
+        initialize_database,
+        save_kb_item,  # async
     )
-    from lean_automator.kb.search import find_similar_items  # async
 
     # Import GeminiClient only for type hinting if needed, we will mock its usage
     from lean_automator.llm.caller import GeminiClient

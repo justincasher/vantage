@@ -8,27 +8,24 @@ and handling specific fields like embeddings, dependencies, links, and
 status updates using a temporary SQLite database.
 """
 
-import os
-import sqlite3
-import pytest
-import json
-import numpy as np  # Added for embedding tests
 import asyncio  # Added for async calls
-from dataclasses import asdict
-from datetime import datetime, timezone, timedelta
-import time  # Import time for sleep
 import logging  # Import logging
+import os
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
+
+import numpy as np  # Added for embedding tests
+import pytest
 
 # Import the module to be tested, assuming 'src' is discoverable or using path adjustments
 # If running pytest from the root directory, it should find lean_automator under src
 from lean_automator.kb import storage as kb_storage
 from lean_automator.kb.storage import (
-    KBItem,
-    ItemType,
-    ItemStatus,
-    LatexLink,
-    DEFAULT_DB_PATH,  # Import the default path for comparison if needed
     EMBEDDING_DTYPE,  # Import dtype for embedding tests
+    ItemStatus,
+    ItemType,
+    KBItem,
+    LatexLink,
 )
 
 # --- Apply the integration mark to all tests in this module ---

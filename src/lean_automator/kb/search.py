@@ -7,11 +7,10 @@ and performing semantic search within the Knowledge Base by comparing vector
 similarity (cosine similarity) between a query embedding and stored embeddings.
 """
 
-import asyncio
-import numpy as np
-import os
 import warnings
 from typing import List, Optional, Tuple
+
+import numpy as np
 
 try:
     from lean_automator.config.loader import APP_CONFIG
@@ -33,11 +32,11 @@ except ImportError:
 
 try:
     from lean_automator.kb.storage import (
-        KBItem,
-        get_kb_item_by_name,
-        get_all_items_with_embedding,
         DEFAULT_DB_PATH,
         EMBEDDING_DTYPE,
+        KBItem,
+        get_all_items_with_embedding,
+        get_kb_item_by_name,
     )
 except ImportError:
     warnings.warn(

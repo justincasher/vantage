@@ -1,9 +1,10 @@
 # File: test_latex_processor_basic.py
 
 import asyncio
-import os
 import logging
+import os
 import sys
+
 from dotenv import load_dotenv
 
 # --- Add project root to path to allow imports ---
@@ -20,9 +21,9 @@ if project_root not in sys.path:
 # --- Module Imports (after path setup and dotenv) ---
 try:
     from lean_automator.kb import storage as kb_storage
+    from lean_automator.kb.storage import ItemStatus, ItemType
     from lean_automator.latex import processor as latex_processor
     from lean_automator.llm import caller as llm_call
-    from lean_automator.kb.storage import ItemType, ItemStatus
 except ImportError as e:
     print(f"Error importing project modules: {e}")
     print("Ensure the script is run from the project root or adjust PYTHONPATH.")
@@ -54,7 +55,7 @@ async def setup_test_data(db_path: str):
     if os.path.exists(db_path):
         try:
             os.remove(db_path)
-            logger.debug(f"Removed existing test database.")
+            logger.debug("Removed existing test database.")
         except OSError as e:
             logger.error(f"Error removing existing database {db_path}: {e}")
             # Decide if this is fatal or if we can continue (maybe DB is locked)

@@ -9,12 +9,13 @@ and provides helper functions to access specific sensitive values directly
 from the environment.
 """
 
-import yaml
 import json
-import os
 import logging
+import os
+from typing import Any, Dict, List, Optional, Tuple, Type
+
+import yaml
 from dotenv import load_dotenv
-from typing import Any, Dict, List, Tuple, Type, Optional
 
 # Initialize logging for this module
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def load_configuration(
 
     # Load Base YAML Configuration
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
         logger.info(f"Loaded base config from '{config_path}'.")
     except FileNotFoundError:
@@ -103,7 +104,7 @@ def load_configuration(
 
     # Load and Merge JSON Costs Data
     try:
-        with open(costs_path, "r", encoding="utf-8") as f:
+        with open(costs_path, encoding="utf-8") as f:
             model_costs = json.load(f)
         if "costs" not in config or not isinstance(config.get("costs"), dict):
             config["costs"] = {}

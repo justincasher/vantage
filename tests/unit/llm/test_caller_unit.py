@@ -1,35 +1,33 @@
 # File: tests/unit/llm/test_caller_unit.py
 
-import pytest
-import pytest_asyncio
 import json
 import warnings
-import os
-import asyncio
-from dataclasses import dataclass, field, is_dataclass
-from typing import Dict, Optional, Any, List
-from unittest.mock import MagicMock, AsyncMock, patch, call  # For mocking
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
+from unittest.mock import AsyncMock, MagicMock  # For mocking
+
+import pytest
 
 # Assuming pytest runs from root and pytest.ini sets pythonpath=src
 # Adjust the import path based on your actual project structure if src isn't in pythonpath
 try:
-    from lean_automator.llm.caller import (
-        GeminiCostTracker,
-        ModelCostInfo,
-        ModelUsageStats,
-        GeminiClient,
-        FALLBACK_EMBEDDING_MODEL,  # Import fallback for testing
-        FALLBACK_MAX_RETRIES,
-        FALLBACK_BACKOFF_FACTOR,
-        # GenerationConfig, # Import necessary types if used by client directly
-        # SafetySetting,
-        # HarmCategory,
-    )
-
     # Import the genai module itself for patching, and potential types
     import google.generativeai as genai
     import google.generativeai.types as genai_types
     from google.api_core import exceptions as google_api_exceptions  # For API errors
+
+    from lean_automator.llm.caller import (
+        FALLBACK_BACKOFF_FACTOR,
+        # GenerationConfig, # Import necessary types if used by client directly
+        # SafetySetting,
+        # HarmCategory,
+        FALLBACK_EMBEDDING_MODEL,  # Import fallback for testing
+        FALLBACK_MAX_RETRIES,
+        GeminiClient,
+        GeminiCostTracker,
+        ModelCostInfo,
+        ModelUsageStats,
+    )
 
 except ImportError as e:
     # If the core dependencies are missing, skip all tests in this module.

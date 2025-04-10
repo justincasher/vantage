@@ -7,7 +7,7 @@ name = "vantage"
 version = "0.1.0"
 description = "A project for automating Lean formalization and mathematical exploration."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 
 # -- Ruff Configuration --
 

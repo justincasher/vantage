@@ -13,16 +13,16 @@ items (`KBItem`). It defines functions to:
 """
 
 import asyncio
-import subprocess
-import os
-import tempfile
-import sys
-import shutil
-from typing import Tuple, Dict, Set, Optional, Any, List
-import logging
-import pathlib
 import functools
+import logging
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
 import warnings
+from typing import Any, List, Optional, Tuple
 
 # Use absolute imports assume src is in path or package installed
 try:
@@ -45,12 +45,12 @@ except ImportError:
 try:
     # NOTE: Ensure kb_storage defines ItemStatus, KBItem etc. correctly
     from lean_automator.kb.storage import (
-        KBItem,
+        DEFAULT_DB_PATH,  # Import if needed for default path logic
         ItemStatus,
         ItemType,  # Make sure ItemType is imported if used internally
+        KBItem,
         get_kb_item_by_name,
         save_kb_item,
-        DEFAULT_DB_PATH,  # Import if needed for default path logic
     )
 except ImportError:
     print("Error: Failed to import kb_storage.", file=sys.stderr)
@@ -118,7 +118,7 @@ logger.info(f"Using shared library source directory name: {SHARED_LIB_SRC_DIR_NA
 SHARED_LIB_PATH: Optional[pathlib.Path] = None
 if not SHARED_LIB_PATH_STR:
     logger.warning(
-        f"Shared library path not configured (checked env var LEAN_AUTOMATOR_SHARED_LIB_PATH via config system). Persistent library features may fail."
+        "Shared library path not configured (checked env var LEAN_AUTOMATOR_SHARED_LIB_PATH via config system). Persistent library features may fail."
     )
 else:
     try:

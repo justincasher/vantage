@@ -14,10 +14,10 @@ indicating no fix was applied. Future handlers for other error patterns can be
 added here.
 """
 
-import re
 import logging
-from typing import Tuple, Set
+import re
 import warnings
+from typing import Set, Tuple
 
 try:
     from lean_automator.config.loader import APP_CONFIG

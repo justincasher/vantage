@@ -1,28 +1,27 @@
 # File: tests/unit/kb/test_search_unit.py
 
-import pytest
-import pytest_asyncio
+from typing import List, Tuple
+from unittest.mock import AsyncMock, MagicMock, call
+
 import numpy as np
-import warnings
-from unittest.mock import patch, MagicMock, AsyncMock, call
-from typing import List, Tuple, Optional
+import pytest
 
 # Assuming pytest runs from root and pytest.ini sets pythonpath=src
 try:
     from lean_automator.kb.search import (
-        generate_embedding,
         _bytes_to_vector,
         _cosine_similarity,
         find_similar_items,
+        generate_embedding,
+    )
+    from lean_automator.kb.storage import (
+        DEFAULT_DB_PATH,
+        EMBEDDING_DTYPE,
+        ItemStatus,
+        ItemType,
+        KBItem,
     )
     from lean_automator.llm.caller import GeminiClient
-    from lean_automator.kb.storage import (
-        KBItem,
-        EMBEDDING_DTYPE,
-        DEFAULT_DB_PATH,
-        ItemType,
-        ItemStatus,
-    )
 except ImportError as e:
     pytest.skip(
         f"Skipping test module: Failed to import components. Error: {e}",

@@ -1,41 +1,32 @@
 # tests/unit/lean/test_interaction_unit.py
 
-import pytest
 import asyncio
+import pathlib
 import subprocess
 import tempfile
-import os
-import pathlib
-import logging
 
 # Keep patch from unittest.mock
-from unittest.mock import AsyncMock, MagicMock, patch, call, ANY
-from datetime import datetime, timezone  # Import datetime for KBItem default
-import copy  # Import copy for deep copies if needed, though manual creation might be better
-import shutil  # Import shutil as it's used in the main code
-import warnings
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # --- Imports for module under test and dependencies ---
 try:
     # Import the module under test
-    from src.lean_automator.lean.interaction import (
-        _module_name_to_path,
-        _generate_imports_for_target,
-        _create_temp_env_for_verification,
-        _update_persistent_library,
-        check_and_compile_item,
-        logger as lean_interaction_logger,  # Import the logger
-        # Module-level constants will be patched via the module object
-    )
+    # Import for patching APP_CONFIG or related accessors if needed elsewhere
+    from src.lean_automator.config import (
+        loader as config_loader,
+    )  # Using alias for consistency if needed
+    from src.lean_automator.kb import storage as kb_storage_module
 
     # Import kb_storage components AND the module itself for patching
     from src.lean_automator.kb.storage import (
-        KBItem,
+        DEFAULT_DB_PATH,
         ItemStatus,
         ItemType,
+        KBItem,
         LatexLink,
         _sentinel,
-        DEFAULT_DB_PATH,
         # Don't import the functions we are mocking here, import the module
         get_kb_item_by_name,  # Needed for mocks in check_and_compile tests
         save_kb_item,  # Needed for mocks in check_and_compile tests
@@ -43,12 +34,17 @@ try:
 
     # Import the actual lean_interaction and kb_storage modules for patching
     from src.lean_automator.lean import interaction as lean_interaction_module
-    from src.lean_automator.kb import storage as kb_storage_module
-
-    # Import for patching APP_CONFIG or related accessors if needed elsewhere
-    from src.lean_automator.config import (
-        loader as config_loader,
-    )  # Using alias for consistency if needed
+    from src.lean_automator.lean.interaction import (
+        _create_temp_env_for_verification,
+        _generate_imports_for_target,
+        _module_name_to_path,
+        _update_persistent_library,
+        check_and_compile_item,
+    )
+    from src.lean_automator.lean.interaction import (
+        logger as lean_interaction_logger,  # Import the logger
+        # Module-level constants will be patched via the module object
+    )
 
 except ImportError as e:
     pytest.skip(

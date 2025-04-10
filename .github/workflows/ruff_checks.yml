@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-python@v5 # Configures the Python environment for the runner
         with:
           # Specify the Python version matching your project requirements
-          python-version: '3.9'
+          python-version: '3.11'
           # Optional: Cache pip dependencies to speed up subsequent runs
           cache: 'pip'
 

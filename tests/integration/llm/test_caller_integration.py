@@ -11,16 +11,14 @@ environment variable to be set. Tests interacting with the API will be skipped
 if the key is not available.
 """
 
-import os
-import pytest
-import asyncio
 import json
-import warnings  # Added to check for warnings
-import warnings
-from typing import Tuple, List, Dict, Any
+import os
 
 # Make sure pytest can find the src modules
 import sys
+import warnings  # Added to check for warnings
+
+import pytest
 
 sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src"))
@@ -49,17 +47,15 @@ from lean_automator.llm.caller import (
     GeminiClient,
     GeminiCostTracker,
     ModelCostInfo,  # Import if needed for direct assertion
-    FALLBACK_MODEL_COSTS_JSON,
-    DEFAULT_SAFETY_SETTINGS,
-)
+    )
 
 # Import specific types/exceptions needed for assertions and setup
 try:
-    from google.generativeai import types as genai_types
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
     from google.api_core import (
         exceptions as google_api_exceptions,
     )  # For asserting specific API errors
+    from google.generativeai import types as genai_types
+    from google.generativeai.types import HarmBlockThreshold, HarmCategory
 except ImportError:
     # Allow tests to be collected even if library is missing,
     # api_key fixture will skip them later if key (and likely library) is unavailable.
