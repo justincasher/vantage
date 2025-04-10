@@ -22,14 +22,10 @@ if project_root not in sys.path:
 try:
     # Assuming pytest runs from root and pytest.ini sets pythonpath=src
     from dataclasses import dataclass, field  # Added missing imports
-    from typing import (
-        Any,
-        Dict,
-        Generator,
+    from typing import (  # Added missing imports
         List,
         Optional,
-        Tuple,
-    )  # Added missing imports
+    )
 
     from lean_automator.kb.storage import (
         EMBEDDING_DTYPE,
@@ -493,7 +489,8 @@ def test_kbitem_from_db_dict():
         "lean_code": "prop P : Q",
         "description_nl": "Deserialize me",
         # "lean_olean": olean_data, # Removed
-        "embedding_latex": embedding_data_latex,  # Embeddings still loaded if present in DB
+        "embedding_latex": embedding_data_latex,
+        # Embeddings still loaded if present in DB
         "embedding_nl": embedding_data_nl,
         "topic": "Test.Deserialization",
         "plan_dependencies": json.dumps(plan_deps),
@@ -553,7 +550,8 @@ def test_kbitem_from_db_dict():
 
 
 def test_kbitem_from_db_dict_minimal():
-    """Test deserialization with only mandatory fields and missing optionals/empty lists."""
+    """Test deserialization with only mandatory fields and missing optionals/empty
+    lists."""
     now_iso = datetime.now(timezone.utc).isoformat()
     db_dict = {
         "unique_name": "test.deserial.minimal",
@@ -662,7 +660,8 @@ def test_kbitem_from_db_dict_error_handling():
 
 
 def test_serialization_round_trip():
-    """Test that an item can be serialized and deserialized back to an equivalent object."""
+    """Test that an item can be serialized and deserialized back to an equivalent
+    object."""
     now = datetime.now(timezone.utc)
     plan_deps = ["plan.dep.X"]
     # olean_data = b'olean_for_round_trip' # Removed
@@ -721,7 +720,8 @@ def test_serialization_round_trip():
     assert item_reloaded.latex_proof == item_original.latex_proof  # Check proof field
     assert item_reloaded.lean_code == item_original.lean_code
     assert item_reloaded.description_nl == item_original.description_nl
-    # assert item_reloaded.lean_olean == item_original.lean_olean # Removed lean_olean check
+    # assert item_reloaded.lean_olean == item_original.lean_olean
+    # # Removed lean_olean check
     assert item_reloaded.embedding_latex == item_original.embedding_latex
     assert item_reloaded.embedding_nl == item_original.embedding_nl
     assert item_reloaded.topic == item_original.topic

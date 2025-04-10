@@ -17,7 +17,6 @@ try:
     from lean_automator.kb.storage import (
         DEFAULT_DB_PATH,
         EMBEDDING_DTYPE,
-        ItemStatus,
         ItemType,
         KBItem,
     )
@@ -44,7 +43,10 @@ def create_embedding_bytes(vector: List[float]) -> bytes:
 
 @pytest.fixture
 def mock_gemini_client() -> MagicMock:
-    """Provides a MagicMock instance simulating GeminiClient with embed_content mocked."""
+    """
+    Provides a MagicMock instance simulating GeminiClient with
+    embed_content mocked.
+    """
     client = MagicMock(spec=GeminiClient)
     # Mock the async method used by generate_embedding
     client.embed_content = AsyncMock()
@@ -292,7 +294,7 @@ async def test_find_similar_items_success(mock_gemini_client, patch_db_functions
     # Item A: [1.0, 0.0, 0.0] -> Score ~ 0.994
     # Item B: [0.0, 1.0, 0.0] -> Score ~ 0.110
     # Item C: [-1.0, 0.0, 0.0]-> Score ~ -0.994
-    # Item D: [0.707, 0.707, 0.0] -> Score ~ 0.994*0.707 + 0.110*0.707 ~ 0.702 + 0.078 ~ 0.78
+    # Item D: [0.707, 0.707, 0.0] -> Score ~ 0.994*0.707 + 0.110*0.707 ~ 0.78
 
     # Expected order: A, D, B (top 3)
     assert len(results) == top_n

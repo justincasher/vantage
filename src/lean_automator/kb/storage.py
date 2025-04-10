@@ -38,7 +38,8 @@ try:
     from lean_automator.llm.caller import GeminiClient
 except ImportError:
     warnings.warn(
-        "llm_call.GeminiClient not found. Embedding generation in save_kb_item will fail.",
+        "llm_call.GeminiClient not found. "
+        "Embedding generation in save_kb_item will fail.",
         ImportWarning,
     )
     GeminiClient = None  # type: ignore
@@ -122,7 +123,8 @@ class ItemStatus(enum.Enum):
     LEAN_VALIDATION_FAILED = "LeanValidationFailed"  # check_and_compile failed
     PROVEN = "Proven"  # Lean code successfully validated (Implies LATEX_ACCEPTED)
 
-    # Specific Proven States (Map to PROVEN for simplicity in logic, but retain for potential filtering)
+    # Specific Proven States (Map to PROVEN for simplicity in logic, but retain for
+    # potential filtering)
     AXIOM_ACCEPTED = "Proven"  # Axioms are accepted, not strictly proven
     DEFINITION_ADDED = "Proven"  # Definitions are added
     REMARK_ADDED = "Proven"
@@ -144,7 +146,8 @@ class LatexLink:
     """Represents a link to a specific component in an external LaTeX source.
 
     Attributes:
-        citation_text (str): The text used for citing the external source (e.g., "[Knuth73]").
+        citation_text (str): The text used for citing the external source
+            (e.g., "[Knuth73]").
         link_type (str): The type of link, defaulting to 'statement'. Other potential
             values could be 'proof', 'definition', etc.
         source_identifier (Optional[str]): A unique identifier for the external
@@ -152,7 +155,8 @@ class LatexLink:
         latex_snippet (Optional[str]): A short snippet of the LaTeX code from the
             external source related to this link.
         match_confidence (Optional[float]): A confidence score (e.g., 0.0 to 1.0)
-            indicating the likelihood that this link correctly points to the intended component.
+            indicating the likelihood that this link correctly points to the
+            intended component.
         verified_by_human (bool): Flag indicating if a human has confirmed the
             correctness of this link. Defaults to False.
     """
@@ -168,7 +172,8 @@ class LatexLink:
     def from_dict(cls, data: Dict[str, Any]) -> "LatexLink":
         """Creates a LatexLink instance from a dictionary.
 
-        Sets a default 'link_type' of 'statement' if not present in the input dictionary.
+        Sets a default 'link_type' of 'statement' if not present in the input
+        dictionary.
 
         Args:
             data (Dict[str, Any]): A dictionary containing keys corresponding to
@@ -191,30 +196,36 @@ class LatexLink:
 
 @dataclass
 class KBItem:
-    """Represents a single node (mathematical statement, definition, etc.) in the Knowledge Base.
+    """Represents a single node (mathematical statement, definition, etc.) in the KB.
 
     This dataclass holds all information related to a mathematical item, including its
-    textual descriptions (NL and LaTeX), formal Lean code, embeddings for semantic search,
-    relationships to other items (dependencies), links to external sources, and metadata
-    tracking its processing status and history.
+    textual descriptions (NL and LaTeX), formal Lean code, embeddings for semantic
+    search, relationships to other items (dependencies), links to external sources,
+    and metadata tracking its processing status and history.
 
     Attributes:
-        id (Optional[int]): The primary key identifier from the database. None if not saved yet.
-        unique_name (str): A unique human-readable or generated identifier (e.g., "lemma_xyz").
-            Defaults to a UUID-based name if not provided.
-        item_type (ItemType): The category of the mathematical item (e.g., Theorem, Definition).
+        id (Optional[int]): The primary key identifier from the database.
+            None if not saved yet.
+        unique_name (str): A unique human-readable or generated identifier
+            (e.g., "lemma_xyz"). Defaults to a UUID-based name if not provided.
+        item_type (ItemType): The category of the mathematical item
+            (e.g., Theorem, Definition).
         description_nl (str): A natural language description of the item.
-        latex_statement (Optional[str]): The LaTeX representation of the item's statement.
-        latex_proof (Optional[str]): An informal proof written in LaTeX (only relevant for
-            item types that require proof). Set to None otherwise.
-        lean_code (str): The formal Lean code representing the item, potentially incomplete (e.g., containing 'sorry').
-        embedding_nl (Optional[bytes]): The embedding vector generated from `description_nl`,
-            stored as raw bytes (numpy array serialized). None if not generated.
-        embedding_latex (Optional[bytes]): The embedding vector generated *only* from
-            `latex_statement`, stored as raw bytes. None if not generated.
-        topic (str): A general topic or subject area (e.g., "Group Theory", "Measure Theory").
-        plan_dependencies (List[str]): A list of unique names of other KBItems identified
-            as necessary prerequisites during proof planning or generation.
+        latex_statement (Optional[str]): The LaTeX representation of the
+            item's statement.
+        latex_proof (Optional[str]): An informal proof written in LaTeX (only
+            relevant for item types that require proof). Set to None otherwise.
+        lean_code (str): The formal Lean code representing the item, potentially
+            incomplete (e.g., containing 'sorry').
+        embedding_nl (Optional[bytes]): The embedding vector generated from
+            `description_nl`, stored as raw bytes (numpy array serialized).
+            None if not generated.
+        embedding_latex (Optional[bytes]): The embedding vector generated *only*
+            from `latex_statement`, stored as raw bytes. None if not generated.
+        topic (str): A general topic or subject area (e.g., "Group Theory",
+            "Measure Theory").
+        plan_dependencies (List[str]): A list of unique names of other KBItems
+            identified as necessary prerequisites during proof planning or generation.
         dependencies (List[str]): A list of unique names of other KBItems discovered as
             dependencies during Lean code compilation or validation.
         latex_links (List[LatexLink]): A list of links to external LaTeX sources related
@@ -313,10 +324,11 @@ class KBItem:
 
         Args:
             new_status (ItemStatus): The new status to set for the item.
-            error_log (Optional[str]): If provided (and not the sentinel), sets the
-                `lean_error_log`. Use None to clear it explicitly.
-            review_feedback (Optional[str]): If provided (and not the sentinel), sets the
-                `latex_review_feedback`. Use None to clear it explicitly.
+            error_log (Optional[str]): If provided (and not the sentinel), sets
+                the `lean_error_log`. Use None to clear it explicitly.
+            review_feedback (Optional[str]): If provided (and not the
+                sentinel), sets the `latex_review_feedback`. Use None to clear
+                it explicitly.
 
         Raises:
             TypeError: If `new_status` is not a valid `ItemStatus` enum member.
@@ -382,7 +394,7 @@ class KBItem:
 
     # --- Serialization ---
     def to_dict_for_db(self) -> Dict[str, Any]:
-        """Serializes the KBItem instance into a dictionary suitable for database storage.
+        """Serializes the KBItem instance into a dictionary for database storage.
 
         Converts complex types (enums, lists, datetimes, LatexLink list) into
         database-compatible formats (strings, JSON strings). Excludes embedding
@@ -390,7 +402,8 @@ class KBItem:
         Sets `latex_proof` to None if the item type does not require one.
 
         Returns:
-            Dict[str, Any]: A dictionary representation of the item ready for DB insertion/update.
+            Dict[str, Any]: A dictionary representation of the item ready for DB
+            insertion/update.
         """
         # Ensure proof is None if not required
         proof = self.latex_proof if self.item_type.requires_proof() else None
@@ -419,19 +432,20 @@ class KBItem:
             "generation_prompt": self.generation_prompt,
             "raw_ai_response": self.raw_ai_response,
             "lean_error_log": self.lean_error_log,
-            "created_at": self.created_at.isoformat(),  # Store datetime as ISO string
-            "last_modified_at": self.last_modified_at.isoformat(),  # Store datetime as ISO string
+            # Store as ISO string
+            "created_at": self.created_at.isoformat(),
+            "last_modified_at": self.last_modified_at.isoformat(),
         }
 
     @classmethod
     def from_db_dict(cls, data: Dict[str, Any]) -> "KBItem":
         """Creates a KBItem instance from a dictionary retrieved from the database.
 
-        Handles deserialization of complex types (enums from names, lists from JSON strings,
-        datetimes from ISO strings, LatexLink list from JSON). Includes error handling
-        for invalid enum values or JSON decoding errors. Retrieves embedding fields
-        directly if present in the input dictionary. Loads `latex_proof` only if the
-        determined `item_type` requires it.
+        Handles deserialization of complex types (enums from names, lists from
+        JSON strings, datetimes from ISO strings, LatexLink list from JSON).
+        Includes error handling for invalid enum values or JSON decoding errors.
+        Retrieves embedding fields directly if present in the input dictionary.
+        Loads `latex_proof` only if the determined `item_type` requires it.
 
         Args:
             data (Dict[str, Any]): A dictionary representing a row fetched from the
@@ -439,11 +453,12 @@ class KBItem:
                 Must include keys for all necessary KBItem attributes stored in the DB.
 
         Returns:
-            KBItem: An instance of the KBItem class populated with data from the dictionary.
+            KBItem: An instance of the KBItem class populated with data from the
+            dictionary.
 
         Raises:
-            ValueError: If deserialization fails due to missing keys, invalid enum names,
-                JSON decoding errors, or other type mismatches.
+            ValueError: If deserialization fails due to missing keys, invalid
+                enum names, JSON decoding errors, or other type mismatches.
         """
         try:
             # Deserialize Enums
@@ -457,7 +472,8 @@ class KBItem:
                 status = ItemStatus[status_str]
             except KeyError:
                 warnings.warn(
-                    f"Invalid status '{status_str}' for item {data.get('unique_name')}. Defaulting to PENDING."
+                    f"Invalid status '{status_str}' for item "
+                    f"{data.get('unique_name')}. Defaulting to PENDING."
                 )
                 status = ItemStatus.PENDING
 
@@ -465,7 +481,8 @@ class KBItem:
             failure_count = data.get("failure_count", 0)
             if not isinstance(failure_count, int):
                 warnings.warn(
-                    f"Invalid type for failure_count: got {type(failure_count)}. Using 0."
+                    "Invalid type for failure_count: "
+                    f"got {type(failure_count)}. Using 0."
                 )
                 failure_count = 0
 
@@ -507,8 +524,9 @@ class KBItem:
             )
         except (KeyError, json.JSONDecodeError, ValueError, TypeError) as e:
             # Catch specific expected errors during deserialization
+            item_name = data.get("unique_name", "UNKNOWN_ITEM")
             raise ValueError(
-                f"Error deserializing KBItem '{data.get('unique_name', 'UNKNOWN_ITEM')}' from DB dict: {e}"
+                f"Error deserializing KBItem '{item_name}' from DB dict: {e}"
             ) from e
 
 
@@ -555,7 +573,8 @@ def _add_column_if_not_exists(
         cursor (sqlite3.Cursor): An active database cursor.
         table_name (str): The name of the table to modify.
         column_name (str): The name of the column to add.
-        column_type (str): The SQLite data type for the new column (e.g., "TEXT", "INTEGER", "BLOB").
+        column_type (str): The SQLite data type for the new column
+            (e.g., "TEXT", "INTEGER", "BLOB").
         default_value (Any, optional): A default value for the new column. Only supports
             string, int, or float defaults. Defaults to None.
     """
@@ -572,13 +591,17 @@ def _add_column_if_not_exists(
                     default_clause = f"DEFAULT {default_value}"
                 else:
                     logger.warning(
-                        f"Unsupported default value type for {column_name}: {type(default_value)}"
+                        f"Unsupported default value type for {column_name}: "
+                        f"{type(default_value)}"
                     )
             # Special case: ensure failure_count is NOT NULL if added this way
             if column_name == "failure_count":
                 not_null_clause = "NOT NULL"
 
-            sql = f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} {not_null_clause} {default_clause};"
+            sql = (
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} "
+                f"{not_null_clause} {default_clause};"
+            )
             cursor.execute(sql)
             logger.info(f"Added '{column_name}' column to {table_name} table.")
         except sqlite3.OperationalError as e:
@@ -639,7 +662,8 @@ def initialize_database(db_path: Optional[str] = None):
 
         # Create indexes for faster lookups
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_kbitem_unique_name ON kb_items (unique_name);"
+            "CREATE INDEX IF NOT EXISTS idx_kbitem_unique_name "
+            "ON kb_items (unique_name);"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_kbitem_type ON kb_items (item_type);"
@@ -660,14 +684,14 @@ def initialize_database(db_path: Optional[str] = None):
 async def save_kb_item(
     item: KBItem, client: Optional[GeminiClient] = None, db_path: Optional[str] = None
 ) -> KBItem:
-    """Saves a KBItem to the database (INSERT or UPDATE) and handles embedding generation.
+    """Saves a KBItem to the database (INSERT/UPDATE) and handles embedding generation.
 
     This function performs an UPSERT operation based on the item's `unique_name`.
     If the item is new or if `latex_statement` or `description_nl` has changed
     compared to the existing database record, it attempts to generate new embeddings
     using the provided `GeminiClient` (if available). Embeddings are generated only
     from `latex_statement` (not `latex_proof`) and `description_nl`. Embeddings
-    are updated in the database only if they have actually changed or are newly generated.
+    are updated in the DB only if they have changed or are newly generated.
     The item's `last_modified_at` timestamp is always updated.
 
     Args:
@@ -676,7 +700,8 @@ async def save_kb_item(
         client (Optional[GeminiClient]): An initialized GeminiClient instance. Required
             if embedding generation is needed based on content changes. If None,
             embeddings will not be generated or updated.
-        db_path (Optional[str]): Path to the database file. If None, uses `DEFAULT_DB_PATH`.
+        db_path (Optional[str]): Path to the database file. If None, uses
+            `DEFAULT_DB_PATH`.
 
     Returns:
         KBItem: The saved KBItem object, updated with its database `id` and potentially
@@ -729,9 +754,7 @@ async def save_kb_item(
         timezone.utc
     )  # Ensure modification time is current
     db_data = item.to_dict_for_db()  # Serialize item to DB-compatible dict
-    db_data_id = db_data.pop(
-        "id", None
-    )  # Remove ID if present, use unique_name for conflict
+    db_data.pop("id", None)  # Remove ID if present, use unique_name for conflict
     db_data.pop("embedding_latex", None)  # Remove embeddings, handle separately
     db_data.pop("embedding_nl", None)
 
@@ -782,11 +805,13 @@ async def save_kb_item(
     # Issue warnings if generation is needed but cannot proceed
     if latex_statement_changed and item.latex_statement and not should_generate_latex:
         warnings.warn(
-            f"Cannot generate LaTeX statement embedding for '{item.unique_name}'. Client/kb_search missing or statement empty."
+            f"Cannot generate LaTeX statement embedding for '{item.unique_name}'. "
+            "Client/kb_search missing or statement empty."
         )
     if nl_changed and item.description_nl and not should_generate_nl:
         warnings.warn(
-            f"Cannot generate NL embedding for '{item.unique_name}'. Client/kb_search missing or text empty."
+            f"Cannot generate NL embedding for '{item.unique_name}'. "
+            "Client/kb_search missing or text empty."
         )
 
     # Perform embedding generation if conditions met
@@ -822,7 +847,8 @@ async def save_kb_item(
                 )
             elif should_generate_latex:  # Warn if generation was attempted but failed
                 warnings.warn(
-                    f"Failed to generate LaTeX statement embedding for '{item.unique_name}'. Using previous value if any."
+                    f"Failed to generate LaTeX statement embedding for "
+                    f"'{item.unique_name}'. Using previous value if any."
                 )
 
             if generated_nl_np is not None:
@@ -830,12 +856,14 @@ async def save_kb_item(
                 logger.debug(f"Generated NL embedding for {item.unique_name}")
             elif should_generate_nl:  # Warn if generation was attempted but failed
                 warnings.warn(
-                    f"Failed to generate NL embedding for '{item.unique_name}'. Using previous value if any."
+                    f"Failed to generate NL embedding for '{item.unique_name}'. "
+                    "Using previous value if any."
                 )
         except Exception as e:
             # Catch any broad exception during asyncio.gather or embedding generation
             warnings.warn(
-                f"Error during embedding generation task for '{item.unique_name}': {e}. Using previous values if any."
+                f"Error during embedding generation task for '{item.unique_name}': "
+                f"{e}. Using previous values if any."
             )
 
     # --- Determine if embedding columns need a separate DB UPDATE ---
@@ -865,7 +893,8 @@ async def save_kb_item(
             else:
                 # Fallback: If RETURNING didn't work or returned None, try selecting ID
                 logger.warning(
-                    f"UPSERT RETURNING id failed for {item.unique_name}. Attempting fallback SELECT."
+                    f"UPSERT RETURNING id failed for {item.unique_name}. "
+                    "Attempting fallback SELECT."
                 )
                 cursor.execute(
                     "SELECT id FROM kb_items WHERE unique_name = ?", (item.unique_name,)
@@ -884,7 +913,8 @@ async def save_kb_item(
             if item.id is None:
                 # This should not happen if the UPSERT was successful
                 raise sqlite3.OperationalError(
-                    f"Cannot update embeddings, ID is missing for {item.unique_name} after UPSERT."
+                    "Cannot update embeddings, ID is missing for "
+                    f"{item.unique_name} after UPSERT."
                 )
 
             if update_latex_in_db:
@@ -911,7 +941,8 @@ async def save_kb_item(
             conn.rollback()  # Rollback transaction on error
             raise  # Reraise the database error
 
-    return item  # Return the item, now guaranteed to have an ID and potentially updated embeddings
+    # Return the item, now guaranteed to have an ID and potentially updated embeddings
+    return item
 
 
 # --- Retrieval Functions ---
@@ -1011,20 +1042,23 @@ def get_items_by_status(
                 yield KBItem.from_db_dict(dict(row))
             except ValueError as e:
                 # Log error and continue to next item if deserialization fails
+                item_name = row.get("unique_name", "UNKNOWN")
                 logger.error(
-                    f"Error deserializing KBItem '{row.get('unique_name', 'UNKNOWN')}' while fetching status '{status.name}': {e}"
+                    f"Error deserializing KBItem '{item_name}' while fetching "
+                    f"status '{status.name}': {e}"
                 )
 
 
 def get_items_by_topic(
     topic_prefix: str, db_path: Optional[str] = None
 ) -> Generator[KBItem, None, None]:
-    """Retrieves all KBItems whose topic starts with the given prefix, yielding them one by one.
+    """Retrieves KBItems whose topic starts with the given prefix, yielding them.
 
     Performs a case-sensitive prefix search using the SQL LIKE operator.
 
     Args:
-        topic_prefix (str): The prefix string to match against the beginning of the item's topic.
+        topic_prefix (str): The prefix string to match against the beginning of
+            the item's topic.
         db_path (Optional[str]): Path to the database file. If None, uses
             `DEFAULT_DB_PATH`.
 
@@ -1045,15 +1079,17 @@ def get_items_by_topic(
                 yield KBItem.from_db_dict(dict(row))
             except ValueError as e:
                 # Log error and continue to next item if deserialization fails
+                item_name = row.get("unique_name", "UNKNOWN")
                 logger.error(
-                    f"Error deserializing KBItem '{row.get('unique_name', 'UNKNOWN')}' while fetching topic prefix '{topic_prefix}': {e}"
+                    f"Error deserializing KBItem '{item_name}' while fetching "
+                    f"topic prefix '{topic_prefix}': {e}"
                 )
 
 
 def get_all_items_with_embedding(
     embedding_field: str, db_path: Optional[str] = None
 ) -> List[Tuple[int, str, bytes]]:
-    """Retrieves minimal info (ID, name, embedding) for items with a specific embedding.
+    """Retrieves minimal info (ID, name, embedding) for items with an embedding.
 
     Fetches the primary key ID, unique name, and the raw embedding bytes for all
     items where the specified embedding field (`embedding_nl` or `embedding_latex`)
@@ -1078,7 +1114,10 @@ def get_all_items_with_embedding(
         raise ValueError("embedding_field must be 'embedding_nl' or 'embedding_latex'")
     items_with_embeddings = []
     # Construct SQL query dynamically but safely (field name is validated)
-    sql = f"SELECT id, unique_name, {embedding_field} FROM kb_items WHERE {embedding_field} IS NOT NULL;"
+    sql = (
+        f"SELECT id, unique_name, {embedding_field} FROM kb_items "
+        f"WHERE {embedding_field} IS NOT NULL;"
+    )
     effective_db_path = db_path or DEFAULT_DB_PATH
     with get_db_connection(effective_db_path) as conn:
         cursor = conn.cursor()
@@ -1090,9 +1129,11 @@ def get_all_items_with_embedding(
                 if isinstance(blob, bytes):
                     items_with_embeddings.append((row["id"], row["unique_name"], blob))
                 else:
-                    # Log a warning if the data type is unexpected (should be BLOB/bytes or NULL)
+                    # Log a warning if the data type is unexpected
+                    # (should be BLOB/bytes or NULL)
                     logger.warning(
-                        f"Expected bytes for embedding field '{embedding_field}' on item ID {row['id']}, but got type {type(blob)}. Skipping."
+                        f"Expected bytes for embedding field '{embedding_field}' "
+                        f"on item ID {row['id']}, but got type {type(blob)}. Skipping."
                     )
         except sqlite3.Error as e:
             # Log database errors during retrieval

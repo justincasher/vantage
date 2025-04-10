@@ -22,7 +22,8 @@ import mkdocs_gen_files  # Library for generating files during MkDocs builds
 # --- Logging Setup ---
 # Get a logger specific to this plugin/script
 logger = logging.getLogger(f"mkdocs.plugins.{__name__}")
-# Add a NullHandler to prevent "No handler found" warnings if logging isn't configured elsewhere
+# Add a NullHandler to prevent "No handler found" warnings if loggingc
+# isn't configured elsewhere
 logger.addHandler(logging.NullHandler())
 
 # --- Configuration ---
@@ -31,7 +32,8 @@ src_root = Path("src")
 # Define the specific package directory within the source root
 package_dir = src_root / "lean_automator"
 
-# Define the output directory for the generated reference pages (relative to the MkDocs 'docs' directory)
+# Define the output directory for the generated reference pages
+# (relative to the MkDocs 'docs' directory)
 reference_output_dir = Path("reference")
 
 # --- Main Script Logic ---
@@ -40,7 +42,8 @@ print(f"Searching for Python modules in: {package_dir}")
 # Iterate through all '.py' files recursively within the specified package directory
 # 'sorted()' ensures a consistent order, which helps with reproducibility
 for path in sorted(package_dir.rglob("*.py")):
-    # Calculate the module path relative to the source root (e.g., 'lean_automator/utils/helpers')
+    # Calculate the module path relative to the source root
+    # (e.g., 'lean_automator/utils/helpers')
     # '.with_suffix("")' removes the '.py' extension
     module_path = path.relative_to(src_root).with_suffix("")
 
@@ -100,7 +103,8 @@ with mkdocs_gen_files.open(index_path, "w") as fd:
     )
     print("package's modules, classes, functions, and methods.", file=fd)
     print(
-        "\nPlease use the navigation menu on the left to explore the different modules.",
+        "\nPlease use the navigation menu on the left to explore the different "
+        "modules.",
         file=fd,
     )
     # NOTE: Removed the loop that generated links to individual modules.

@@ -14,22 +14,22 @@ import pytest
 try:
     # Import the module under test
     # Import for patching APP_CONFIG or related accessors if needed elsewhere
-    from src.lean_automator.config import (
-        loader as config_loader,
-    )  # Using alias for consistency if needed
-    from src.lean_automator.kb import storage as kb_storage_module
+    # from src.lean_automator.config import (
+    #     loader as config_loader,
+    # )  # Using alias for consistency if needed
+    # from src.lean_automator.kb import storage as kb_storage_module # noqa: F401
 
     # Import kb_storage components AND the module itself for patching
     from src.lean_automator.kb.storage import (
         DEFAULT_DB_PATH,
-        ItemStatus,
-        ItemType,
+        # ItemStatus,
+        # ItemType,
         KBItem,
-        LatexLink,
-        _sentinel,
+        # LatexLink,
+        # _sentinel,
         # Don't import the functions we are mocking here, import the module
-        get_kb_item_by_name,  # Needed for mocks in check_and_compile tests
-        save_kb_item,  # Needed for mocks in check_and_compile tests
+        # get_kb_item_by_name, # Needed for mocks in check_and_compile tests
+        # save_kb_item, # Needed for mocks in check_and_compile tests
     )
 
     # Import the actual lean_interaction and kb_storage modules for patching
@@ -97,7 +97,8 @@ def test_module_name_to_path_invalid(invalid_module_name):
 
 # Use standard patch.object from unittest.mock
 def test_generate_imports_for_target_with_deps():
-    # Assuming _generate_imports_for_target uses getattr(item, 'plan_dependencies', None)
+    # Assuming _generate_imports_for_target uses
+    # getattr(item, 'plan_dependencies', None)
     item = KBItem(
         unique_name="Test.Module.Item",
         plan_dependencies=[
@@ -119,7 +120,8 @@ def test_generate_imports_for_target_with_deps():
 # Use standard patch.object from unittest.mock
 def test_generate_imports_for_target_no_deps():
     item = KBItem(unique_name="Another.Item", plan_dependencies=[])
-    # Patch even if no deps, to ensure behavior is consistent regardless of actual config
+    # Patch even if no deps, to ensure behavior is consistent regardless
+    # of actual config
     with patch.object(lean_interaction_module, "SHARED_LIB_SRC_DIR_NAME", "MyLib"):
         assert _generate_imports_for_target(item) == ""
 
@@ -144,7 +146,8 @@ def test_generate_imports_for_target_already_prefixed():
 # Use standard patch.object from unittest.mock
 def test_generate_imports_for_target_empty_item_or_deps():
     # The function should handle None item gracefully
-    # Need to patch context even for None, as the constant might be accessed before None check
+    # Need to patch context even for None, as the constant might be accessed
+    # before None check
     with patch.object(lean_interaction_module, "SHARED_LIB_SRC_DIR_NAME", "MyLib"):
         assert _generate_imports_for_target(None) == ""
 
@@ -162,7 +165,8 @@ def test_generate_imports_for_target_empty_item_or_deps():
     with pytest.raises(AttributeError), patch.object(
         lean_interaction_module, "SHARED_LIB_SRC_DIR_NAME", "MyLib"
     ):
-        # Ensure access triggers error if missing and not handled by getattr(..., []) etc.
+        # Ensure access triggers error if missing and not handled by
+        # getattr(..., []) etc.
         mock_instance_missing_attr = MagicMock(
             spec=["unique_name"]
         )  # Only spec unique_name
@@ -203,7 +207,8 @@ def test_create_temp_env_for_verification_success(
 
         temp_proj_path = pathlib.Path(temp_proj_path_str)
         assert temp_proj_path.is_dir()
-        # Check if the base path exists before resolving, as resolve() might fail otherwise
+        # Check if the base path exists before resolving, as resolve() might fail
+        # otherwise
         assert temp_dir_base.exists()
         assert temp_proj_path == temp_dir_base.resolve()
 
@@ -416,7 +421,8 @@ def patch_core_dependencies(mocker):
 @pytest.mark.asyncio
 async def test_check_and_compile_item_not_found(mocker, tmp_path):  # Keep mocker
     unique_name = "Non.Existent.Item"
-    # Patch DB function where it is looked up within lean_interaction's scope using mocker
+    # Patch DB function where it is looked up within lean_interaction's scope
+    # using mocker
     mock_get_item = mocker.patch.object(
         lean_interaction_module, "get_kb_item_by_name", return_value=None
     )
@@ -464,7 +470,8 @@ async def test_check_and_compile_item_config_error_no_shared_lib(mocker):  # Kee
         lean_interaction_module, "save_kb_item", new_callable=AsyncMock
     )
 
-    # Patch the resolved SHARED_LIB_PATH constant to be None within the module using mocker
+    # Patch the resolved SHARED_LIB_PATH constant to be None within the module
+    # using mocker
     mocker.patch.object(lean_interaction_module, "SHARED_LIB_PATH", None)
 
     success, message = await check_and_compile_item(unique_name)
@@ -485,4 +492,5 @@ async def test_check_and_compile_item_config_error_no_shared_lib(mocker):  # Kee
 # _update_persistent_library, and subprocess.run are set up appropriately
 # for each scenario using either patch.object or mocker.patch/mocker.patch.object.
 # Remember to patch SHARED_LIB_PATH to a valid mock path using
-# patch.object or mocker.patch.object for tests that should pass the initial configuration check.
+# patch.object or mocker.patch.object for tests that should pass the initial
+# configuration check.

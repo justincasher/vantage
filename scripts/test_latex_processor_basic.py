@@ -70,42 +70,60 @@ async def setup_test_data(db_path: str):
     dep_prime = kb_storage.KBItem(
         unique_name=DEP_PRIME_DEF_NAME,
         item_type=ItemType.DEFINITION,
-        description_nl="A natural number p is prime if it is greater than 1 and its only divisors are 1 and p.",
-        latex_statement=r"p \in \mathbb{N} \text{ is prime} \iff p > 1 \land (\forall d \in \mathbb{N}, d | p \implies d = 1 \lor d = p)",
+        description_nl=(
+            "A natural number p is prime if it is greater than 1 "
+            "and its only divisors are 1 and p."
+        ),
+        latex_statement=(
+            r"p \in \mathbb{N} \text{ is prime} \iff p > 1 \land "
+            r"(\forall d \in \mathbb{N}, d | p \implies d = 1 \lor d = p)"
+        ),
         latex_proof=None,  # Definitions don't have proofs
         status=ItemStatus.LATEX_ACCEPTED,  # Mark as ready
     )
     await kb_storage.save_kb_item(dep_prime, client=None, db_path=db_path)
     logger.info(
-        f"Created dependency item: {dep_prime.unique_name} with status {dep_prime.status.name}"
+        f"Created dependency item: {dep_prime.unique_name} "
+        f"with status {dep_prime.status.name}"
     )
 
     # 2. Definition of Divides
     dep_divides = kb_storage.KBItem(
         unique_name=DEP_DIVIDES_DEF_NAME,
         item_type=ItemType.DEFINITION,
-        description_nl="A natural number d divides a natural number n if there exists a natural number k such that n = d * k.",
+        description_nl=(
+            "A natural number d divides a natural number n if there exists "
+            "a natural number k such that n = d * k."
+        ),
         latex_statement=r"d | n \iff \exists k \in \mathbb{N}, n = d \times k",
         latex_proof=None,
         status=ItemStatus.LATEX_ACCEPTED,
     )
     await kb_storage.save_kb_item(dep_divides, client=None, db_path=db_path)
     logger.info(
-        f"Created dependency item: {dep_divides.unique_name} with status {dep_divides.status.name}"
+        f"Created dependency item: {dep_divides.unique_name} "
+        f"with status {dep_divides.status.name}"
     )
 
     # 3. Existence of Prime Factor Theorem
     dep_factor = kb_storage.KBItem(
         unique_name=DEP_FACTOR_THM_NAME,
         item_type=ItemType.THEOREM,
-        description_nl="Every natural number greater than 1 has at least one prime divisor.",
-        latex_statement=r"\forall n \in \mathbb{N}, n > 1 \implies (\exists p \in \mathbb{N}, p \text{ is prime} \land p | n)",
-        latex_proof=None,  # We only need the statement as context for the target theorem's statement/proof generation
+        description_nl=(
+            "Every natural number greater than 1 has at least one prime divisor."
+        ),
+        latex_statement=(
+            r"\forall n \in \mathbb{N}, n > 1 \implies "
+            r"(\exists p \in \mathbb{N}, p \text{ is prime} \land p | n)"
+        ),
+        latex_proof=None,  # We only need the statement as context for the
+        # target theorem's statement/proof generation
         status=ItemStatus.LATEX_ACCEPTED,  # Assume this statement is accepted
     )
     await kb_storage.save_kb_item(dep_factor, client=None, db_path=db_path)
     logger.info(
-        f"Created dependency item: {dep_factor.unique_name} with status {dep_factor.status.name}"
+        f"Created dependency item: {dep_factor.unique_name} "
+        f"with status {dep_factor.status.name}"
     )
 
     # --- Create Target Item ---
@@ -120,12 +138,16 @@ async def setup_test_data(db_path: str):
         ],  # List dependencies
         latex_statement=None,  # To be generated
         latex_proof=None,  # To be generated
-        lean_code=f"theorem {TARGET_ITEM_NAME} : Set.Infinite {{ p : Nat // Nat.Prime p }} := sorry",  # Example Lean shell (not used in this test)
+        lean_code=(
+            f"theorem {TARGET_ITEM_NAME} : "
+            f"Set.Infinite {{ p : Nat // Nat.Prime p }} := sorry"
+        ),  # Example Lean shell (not used in this test)
         status=ItemStatus.PENDING_LATEX,  # Ready for the processor
     )
     await kb_storage.save_kb_item(target_item, client=None, db_path=db_path)
     logger.info(
-        f"Created target item: {target_item.unique_name} with status {target_item.status.name}"
+        f"Created target item: {target_item.unique_name} "
+        f"with status {target_item.status.name}"
     )
     return True  # Indicate success
 
@@ -171,7 +193,8 @@ async def main():
                 unique_name=TARGET_ITEM_NAME, client=client, db_path=TEST_DB_PATH
             )
             logger.info(
-                f"generate_and_review_latex finished. Result: {'Success' if success else 'Failure'}"
+                "generate_and_review_latex finished. Result: "
+                f"{'Success' if success else 'Failure'}"
             )
         else:
             raise ImportError(
@@ -187,15 +210,18 @@ async def main():
     if final_item:
         logger.info(f"  Final Status: {final_item.status.name}")
         logger.info(
-            f"  Final LaTeX Statement:\n--- START ---\n{final_item.latex_statement}\n--- END ---"
+            f"  Final LaTeX Statement:\n--- START ---\n"
+            f"{final_item.latex_statement}\n--- END ---"
         )
         if final_item.item_type.requires_proof():
             logger.info(
-                f"  Final LaTeX Proof:\n--- START ---\n{final_item.latex_proof}\n--- END ---"
+                f"  Final LaTeX Proof:\n--- START ---\n"
+                f"{final_item.latex_proof}\n--- END ---"
             )
         if final_item.status == kb_storage.ItemStatus.LATEX_REJECTED_FINAL:
             logger.warning(
-                f"  Final Review Feedback:\n--- START ---\n{final_item.latex_review_feedback}\n--- END ---"
+                f"  Final Review Feedback:\n--- START ---\n"
+                f"{final_item.latex_review_feedback}\n--- END ---"
             )
         elif (
             final_item.latex_review_feedback

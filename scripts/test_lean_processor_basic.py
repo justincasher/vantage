@@ -19,7 +19,8 @@ if not env_loaded_successfully:
     )
     # Show where it looked relative to, which helps debugging
     print(
-        f"Please ensure a .env file exists in the current directory ({os.getcwd()}) or its parent directories.",
+        f"Please ensure a .env file exists in the current directory ({os.getcwd()}) "
+        "or its parent directories.",
         file=sys.stderr,
     )
     sys.exit(1)  # Exit the script with a non-zero status code indicating failure
@@ -49,7 +50,8 @@ except ImportError:
     except ImportError as e:
         print(f"Error importing project modules: {e}")
         print(
-            "Ensure the script is run from the project root or the package is installed."
+            "Ensure the script is run from the project root or the package is "
+            "installed."
         )
         sys.exit(1)
 
@@ -102,7 +104,7 @@ async def setup_test_data(db_path: str):
             return False
 
     kb_storage.initialize_database(db_path)
-    client = None  # No LLM needed for setup phase
+    # client = None # No LLM needed for setup phase -> F841 Removed
 
     items_to_create = []
 
@@ -115,8 +117,16 @@ async def setup_test_data(db_path: str):
         unique_name=DEP_APPEND_ASSOC_AX_NAME,
         item_type=ItemType.AXIOM,
         description_nl="List append (++) is associative.",
-        latex_statement=r"\forall \alpha : \text{Type}, \forall (l_1 l_2 l_3 : \text{List } \alpha), (l_1 ++ l_2) ++ l_3 = l_1 ++ (l_2 ++ l_3)",
-        lean_code=f"universe u\naxiom {DEP_APPEND_ASSOC_AX_NAME} {{α : Type u}} (l₁ l₂ l₃ : List α) : (l₁ ++ l₂) ++ l₃ = l₁ ++ (l₂ ++ l₃)",
+        latex_statement=(
+            r"\forall \alpha : \text{Type}, "
+            r"\forall (l_1 l_2 l_3 : \text{List } \alpha), "
+            r"(l_1 ++ l_2) ++ l_3 = l_1 ++ (l_2 ++ l_3)"
+        ),
+        lean_code=(
+            f"universe u\naxiom {DEP_APPEND_ASSOC_AX_NAME} {{α : Type u}} "
+            f"(l₁ l₂ l₃ : List α) : "
+            f"(l₁ ++ l₂) ++ l₃ = l₁ ++ (l₂ ++ l₃)"
+        ),
         status=ItemStatus.AXIOM_ACCEPTED,  # Indicate statement is ready for placement
     )
     items_to_create.append(assoc_ax)
@@ -126,8 +136,16 @@ async def setup_test_data(db_path: str):
         unique_name=DEP_REVERSE_CONS_AX_NAME,
         item_type=ItemType.AXIOM,
         description_nl="Interaction of reverse with cons.",
-        latex_statement=r"\forall \alpha : \text{Type}, \forall (x : \alpha) (xs : \text{List } \alpha), \text{List.reverse} (x :: xs) = \text{List.append } (\text{List.reverse } xs) [x]",
-        lean_code=f"universe u\naxiom {DEP_REVERSE_CONS_AX_NAME} {{α : Type u}} (x : α) (xs : List α) : List.reverse (x :: xs) = List.append (List.reverse xs) [x]",
+        latex_statement=(
+            r"\forall \alpha : \text{Type}, \forall (x : \alpha) "
+            r"(xs : \text{List } \alpha), \text{List.reverse} (x :: xs) = "
+            r"\text{List.append } (\text{List.reverse } xs) [x]"
+        ),
+        lean_code=(
+            f"universe u\naxiom {DEP_REVERSE_CONS_AX_NAME} {{α : Type u}} "
+            f"(x : α) (xs : List α) : "
+            f"List.reverse (x :: xs) = List.append (List.reverse xs) [x]"
+        ),
         status=ItemStatus.AXIOM_ACCEPTED,
     )
     items_to_create.append(rev_cons_ax)
@@ -137,8 +155,14 @@ async def setup_test_data(db_path: str):
         unique_name=DEP_REVERSE_NIL_AX_NAME,
         item_type=ItemType.AXIOM,
         description_nl="Reverse of the empty list is the empty list.",
-        latex_statement=r"\forall \alpha : \text{Type}, \text{List.reverse} (@List.nil \alpha) = @List.nil \alpha",
-        lean_code=f"universe u\naxiom {DEP_REVERSE_NIL_AX_NAME} {{α : Type u}} : List.reverse (@List.nil α) = @List.nil α",
+        latex_statement=(
+            r"\forall \alpha : \text{Type}, "
+            r"\text{List.reverse} (@List.nil \alpha) = @List.nil \alpha"
+        ),
+        lean_code=(
+            f"universe u\naxiom {DEP_REVERSE_NIL_AX_NAME} {{α : Type u}} : "
+            f"List.reverse (@List.nil α) = @List.nil α"
+        ),
         status=ItemStatus.AXIOM_ACCEPTED,
     )
     items_to_create.append(rev_nil_ax)
@@ -148,8 +172,14 @@ async def setup_test_data(db_path: str):
         unique_name=DEP_APPEND_NIL_AX_NAME,
         item_type=ItemType.AXIOM,
         description_nl="Appending nil to a list results in the original list.",
-        latex_statement=r"\forall \alpha : \text{Type}, \forall (l : \text{List } \alpha), l ++ [] = l",
-        lean_code=f"universe u\naxiom {DEP_APPEND_NIL_AX_NAME} {{α : Type u}} (l : List α) : l ++ [] = l",
+        latex_statement=(
+            r"\forall \alpha : \text{Type}, "
+            r"\forall (l : \text{List } \alpha), l ++ [] = l"
+        ),
+        lean_code=(
+            f"universe u\naxiom {DEP_APPEND_NIL_AX_NAME} {{α : Type u}} "
+            f"(l : List α) : l ++ [] = l"
+        ),
         status=ItemStatus.AXIOM_ACCEPTED,
     )
     items_to_create.append(app_nil_ax)
@@ -159,8 +189,14 @@ async def setup_test_data(db_path: str):
         unique_name=DEP_NIL_APPEND_AX_NAME,
         item_type=ItemType.AXIOM,
         description_nl="Prepending nil to a list results in the original list.",
-        latex_statement=r"\forall \alpha : \text{Type}, \forall (l : \text{List } \alpha), [] ++ l = l",
-        lean_code=f"universe u\naxiom {DEP_NIL_APPEND_AX_NAME} {{α : Type u}} (l : List α) : [] ++ l = l",
+        latex_statement=(
+            r"\forall \alpha : \text{Type}, "
+            r"\forall (l : \text{List } \alpha), [] ++ l = l"
+        ),
+        lean_code=(
+            f"universe u\naxiom {DEP_NIL_APPEND_AX_NAME} {{α : Type u}} "
+            f"(l : List α) : [] ++ l = l"
+        ),
         status=ItemStatus.AXIOM_ACCEPTED,
     )
     items_to_create.append(nil_app_ax)
@@ -168,37 +204,61 @@ async def setup_test_data(db_path: str):
     # --- Save all dependency items ---
     for item in items_to_create:
         try:
-            # No client needed here as we are providing the code and not generating embeddings initially
+            # No client needed here as we are providing the code and not
+            # generating embeddings initially
             await kb_storage.save_kb_item(item, client=None, db_path=db_path)
             logger.info(
-                f"Created dependency item entry: {item.unique_name} with status {item.status.name}"
+                f"Created dependency item entry: {item.unique_name} "
+                f"with status {item.status.name}"
             )
         except Exception as e:
             logger.error(f"Failed to save dependency {item.unique_name}: {e}")
             return False
 
     # --- Create Target Item ---
-    target_latex_statement = r"""For any lists $l$ and $l'$ (over some type $\alpha$), reversing their concatenation yields the concatenation of their reverses in opposite order:
+    target_latex_statement = (
+        r"""For any lists $l$ and $l'$ (over some type $\alpha$), reversing """
+        r"""their concatenation yields the concatenation of their reverses """
+        r"""in opposite order:
 $$ \text{reverse} (l ++ l') = (\text{reverse } l') ++ (\text{reverse } l) $$"""
+    )
     target_latex_proof = r"""
 We prove the statement by induction on the list $l$.
 
 \textbf{Base Case:} $l = []$.
-We need to show $\text{reverse} ([] ++ l') = (\text{reverse } l') ++ (\text{reverse } [])$.
-The left side simplifies: $\text{reverse} ([] ++ l') = \text{reverse } l'$. (using nil_append axiom)
-The right side also simplifies: $(\text{reverse } l') ++ (\text{reverse } []) = (\text{reverse } l') ++ [] = \text{reverse } l'$. (using reverse_nil and append_nil axioms)
+We need to show
+$\text{reverse} ([] ++ l') = (\text{reverse } l') ++ (\text{reverse } [])$.
+The left side simplifies:
+$\text{reverse} ([] ++ l') = \text{reverse } l'$. (using nil_append axiom)
+The right side also simplifies:
+$(\text{reverse } l') ++ (\text{reverse } []) = (\text{reverse } l') ++ []$
+$= \text{reverse } l'$.
+(using reverse_nil and append_nil axioms)
 Since both sides equal $\text{reverse } l'$, the base case holds.
 
 \textbf{Inductive Step:} Assume the property holds for some list $xs$.
-That is, assume $\text{reverse} (xs ++ l') = (\text{reverse } l') ++ (\text{reverse } xs)$ (Inductive Hypothesis, IH).
+That is, assume
+$\text{reverse} (xs ++ l') = (\text{reverse } l') ++ (\text{reverse } xs)$
+(Inductive Hypothesis, IH).
 We want to show the property holds for $l = x :: xs$:
-$$ \text{reverse} ((x :: xs) ++ l') = (\text{reverse } l') ++ (\text{reverse } (x :: xs)) $$
+$$ \text{reverse} ((x :: xs) ++ l') =
+   (\text{reverse } l') ++ (\text{reverse } (x :: xs)) $$
 Let's analyze the left-hand side (LHS):
-\begin{align*} \label{eq:1} \text{LHS} &= \text{reverse} ((x :: xs) ++ l') \\ &= \text{reverse} (x :: (xs ++ l')) \quad (\text{by def of } ++) \\ &= (\text{reverse } (xs ++ l')) ++ [x] \quad (\text{by reverse_cons axiom}) \\ &= ((\text{reverse } l') ++ (\text{reverse } xs)) ++ [x] \quad (\text{by IH})\end{align*}
+\begin{align*} \label{eq:1}
+\text{LHS} &= \text{reverse} ((x :: xs) ++ l') \\
+&= \text{reverse} (x :: (xs ++ l')) \quad (\text{by def of } ++) \\
+&= (\text{reverse } (xs ++ l')) ++ [x] \quad (\text{by reverse_cons axiom}) \\
+&= ((\text{reverse } l') ++ (\text{reverse } xs)) ++ [x] \quad (\text{by IH})
+\end{align*}
 Now let's analyze the right-hand side (RHS):
-\begin{align*} \label{eq:2} \text{RHS} &= (\text{reverse } l') ++ (\text{reverse } (x :: xs)) \\ &= (\text{reverse } l') ++ ((\text{reverse } xs) ++ [x]) \quad (\text{by reverse_cons axiom})\end{align*}
+\begin{align*} \label{eq:2}
+\text{RHS} &= (\text{reverse } l') ++ (\text{reverse } (x :: xs)) \\
+&= (\text{reverse } l') ++ ((\text{reverse } xs) ++ [x])
+   \quad (\text{by reverse_cons axiom})
+\end{align*}
 Comparing the final forms of the LHS and RHS, we have:
-$$ ((\text{reverse } l') ++ (\text{reverse } xs)) ++ [x] \quad \text{vs} \quad (\text{reverse } l') ++ ((\text{reverse } xs) ++ [x]) $$
+$$ ((\text{reverse } l') ++ (\text{reverse } xs)) ++ [x] \quad \text{vs} \quad
+(\text{reverse } l') ++ ((\text{reverse } xs) ++ [x]) $$
 These are equal by the associativity of list append ($++$) (using append_assoc axiom).
 Thus, the property holds for $x :: xs$.
 
@@ -219,7 +279,8 @@ By the principle of induction, the statement holds for all lists $l$. QED.
         # No client needed here
         await kb_storage.save_kb_item(target_item, client=None, db_path=db_path)
         logger.info(
-            f"Created target item entry: {target_item.unique_name} with status {target_item.status.name}"
+            f"Created target item entry: {target_item.unique_name} "
+            f"with status {target_item.status.name}"
         )
     except Exception as e:
         logger.error(f"Failed to save target item {target_item.unique_name}: {e}")
@@ -281,16 +342,19 @@ async def main():
                 axiom_item = kb_storage.get_kb_item_by_name(axiom_name, TEST_DB_PATH)
                 if axiom_item and axiom_item.status == ItemStatus.PROVEN:
                     logger.info(
-                        f"Axiom {axiom_name} successfully placed and compiled. Status: PROVEN."
+                        f"Axiom {axiom_name} successfully placed and compiled. "
+                        f"Status: PROVEN."
                     )
                 elif axiom_item:
                     logger.warning(
-                        f"Axiom {axiom_name} check_and_compile returned success, but DB status is {axiom_item.status.name}."
+                        f"Axiom {axiom_name} check_and_compile returned success, "
+                        f"but DB status is {axiom_item.status.name}."
                     )
                     # Might still be okay if persistent build passed, but worth noting
                 else:
                     logger.warning(
-                        f"Axiom {axiom_name} check_and_compile returned success, but could not re-fetch item from DB."
+                        f"Axiom {axiom_name} check_and_compile returned success, "
+                        f"but could not re-fetch item from DB."
                     )
 
             else:
@@ -308,7 +372,8 @@ async def main():
 
         except Exception as e:
             logger.exception(
-                f"An unexpected error occurred during check_and_compile_item for axiom {axiom_name}: {e}"
+                "An unexpected error occurred during check_and_compile_item "
+                f"for axiom {axiom_name}: {e}"
             )
             all_axioms_placed = False
             break
@@ -330,7 +395,8 @@ async def main():
                     timeout_seconds=LAKE_TIMEOUT_SECONDS,
                 )
                 logger.info(
-                    f"generate_and_verify_lean finished for target. Result: {'Success' if lean_success else 'Failure'}"
+                    "generate_and_verify_lean finished for target. "
+                    f"Result: {'Success' if lean_success else 'Failure'}"
                 )
             else:
                 raise ImportError(
@@ -338,12 +404,14 @@ async def main():
                 )
         except Exception as e:
             logger.exception(
-                f"An error occurred during generate_and_verify_lean for target {TARGET_ITEM_NAME}: {e}"
+                "An error occurred during generate_and_verify_lean "
+                f"for target {TARGET_ITEM_NAME}: {e}"
             )
 
     else:
         logger.error(
-            "--- Phase 2 Skipped: Not all axioms were successfully placed and compiled. ---"
+            "--- Phase 2 Skipped: "
+            "Not all axioms were successfully placed and compiled. ---"
         )
 
     # --- Final Verification ---
@@ -353,18 +421,21 @@ async def main():
         logger.info(f"Target Item: {TARGET_ITEM_NAME}")
         logger.info(f"  Final Status: {final_target_item.status.name}")
         logger.info(
-            f"  Final Lean Code (len={len(final_target_item.lean_code or '')}):\n--- START ---\n{final_target_item.lean_code}\n--- END ---"
+            f"  Final Lean Code (len={len(final_target_item.lean_code or '')}):\n"
+            f"--- START ---\n{final_target_item.lean_code}\n--- END ---"
         )
         if (
             final_target_item.status == kb_storage.ItemStatus.LEAN_VALIDATION_FAILED
             and final_target_item.lean_error_log
         ):
             logger.warning(
-                f"  Lean Error Log:\n--- START ---\n{final_target_item.lean_error_log}\n--- END ---"
+                "  Lean Error Log:\n--- START ---\n"
+                f"{final_target_item.lean_error_log}\n--- END ---"
             )
         elif final_target_item.lean_error_log:
             logger.debug(
-                f"  Last Lean Error Log (present even on success?):\n{final_target_item.lean_error_log}"
+                "  Last Lean Error Log (present even on success?):\n"
+                f"{final_target_item.lean_error_log}"
             )
     else:
         logger.error(

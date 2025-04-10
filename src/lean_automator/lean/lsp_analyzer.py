@@ -97,7 +97,8 @@ class LeanLspClient:
         Args:
             lean_executable_path (str): The file path to the 'lean' executable.
             cwd (str): The directory where the 'lean --server' process should be run.
-                This is important for the server to find project context (e.g., lakefile).
+                This is important for the server to find project context
+                (e.g., lakefile).
             timeout (int): The default timeout in seconds for waiting for LSP responses.
         """
         self.lean_executable_path = lean_executable_path
@@ -122,7 +123,8 @@ class LeanLspClient:
 
         Raises:
             FileNotFoundError: If the lean executable path is invalid.
-            ConnectionError: If streams could not be established or the server fails to start.
+            ConnectionError: If streams could not be established or the server fails
+                to start.
             Exception: For other potential errors during subprocess creation.
         """
         if self.process and self.process.returncode is None:
@@ -141,7 +143,8 @@ class LeanLspClient:
             std_lib_path: Optional[str] = None
             try:
                 logger.debug(
-                    f"LSP Env: Detecting stdlib path using '{self.lean_executable_path} --print-libdir'"
+                    "LSP Env: Detecting stdlib path using "
+                    f"'{self.lean_executable_path} --print-libdir'"
                 )
                 # Using blocking call here for simplicity before async process starts.
                 lean_path_proc = subprocess.run(
@@ -159,15 +162,19 @@ class LeanLspClient:
                     lean_paths.append(std_lib_path)
                 else:
                     logger.warning(
-                        f"LSP Env: Command '{self.lean_executable_path} --print-libdir' did not return valid directory: '{path_candidate}'"
+                        "LSP Env: Command "
+                        f"'{self.lean_executable_path} --print-libdir' "
+                        f"did not return valid directory: '{path_candidate}'"
                     )
             except Exception as e:
                 logger.warning(
-                    f"LSP Env: Failed to detect Lean stdlib path via --print-libdir: {e}. Build path might be incomplete."
+                    "LSP Env: Failed to detect Lean stdlib path via "
+                    f"--print-libdir: {e}. Build path might be incomplete."
                 )
 
             # 2. Add Shared Library Build Path (if provided via __init__)
-            # Use hasattr for safety in case old instances exist without the attribute during development
+            # Use hasattr for safety in case old instances exist
+            # without the attribute during development
             if (
                 hasattr(self, "shared_lib_path")
                 and self.shared_lib_path
@@ -178,25 +185,30 @@ class LeanLspClient:
                 if shared_lib_build_path.is_dir():  # Check if it actually exists
                     abs_shared_lib_build_path = str(shared_lib_build_path.resolve())
                     logger.info(
-                        f"LSP Env: Adding shared lib build path: {abs_shared_lib_build_path}"
+                        "LSP Env: Adding shared lib build path: "
+                        f"{abs_shared_lib_build_path}"
                     )
                     lean_paths.append(abs_shared_lib_build_path)
                 else:
                     logger.warning(
-                        f"LSP Env: Shared library path provided ({self.shared_lib_path}), but build dir not found at {shared_lib_build_path}"
+                        "LSP Env: Shared library path provided "
+                        f"({self.shared_lib_path}), but build dir not found at "
+                        f"{shared_lib_build_path}"
                     )
             elif hasattr(
                 self, "shared_lib_path"
             ):  # Log if attribute exists but wasn't valid/provided
                 logger.debug(
-                    "LSP Env: shared_lib_path attribute exists but is not a valid directory or was not provided."
+                    "LSP Env: shared_lib_path attribute exists but is not a valid "
+                    "directory or was not provided."
                 )
 
             # 3. Add Temporary Project's *Own* Build Path
             temp_project_build_path = pathlib.Path(self.cwd) / ".lake" / "build" / "lib"
             abs_temp_project_build_path = str(temp_project_build_path.resolve())
             logger.debug(
-                f"LSP Env: Adding temp project's own potential build path: {abs_temp_project_build_path}"
+                "LSP Env: Adding temp project's own potential build path: "
+                f"{abs_temp_project_build_path}"
             )
             lean_paths.append(
                 abs_temp_project_build_path
@@ -210,7 +222,8 @@ class LeanLspClient:
                     lean_paths.append(existing_lean_path)
                 else:
                     logger.debug(
-                        f"LSP Env: Existing LEAN_PATH '{existing_lean_path}' is already covered by detected paths."
+                        "LSP Env: Existing LEAN_PATH "
+                        f"'{existing_lean_path}' is already covered by detected paths."
                     )
 
             # Set the final LEAN_PATH
@@ -280,7 +293,8 @@ class LeanLspClient:
                     logger.debug("Stderr stream EOF reached.")
                     break
                 logger.warning(
-                    f"Lean Server STDERR: {line.decode('utf-8', errors='replace').strip()}"
+                    "Lean Server STDERR: "
+                    f"{line.decode('utf-8', errors='replace').strip()}"
                 )
         except asyncio.CancelledError:
             logger.info("Stderr reader task cancelled.")
@@ -294,7 +308,8 @@ class LeanLspClient:
         """Gets the current asyncio event loop.
 
         Returns:
-            asyncio.AbstractEventLoop: The running event loop. Creates one if none exists.
+            asyncio.AbstractEventLoop: The running event loop. Creates one if
+            none exists.
         """
         try:
             return asyncio.get_running_loop()
@@ -347,7 +362,8 @@ class LeanLspClient:
                         return None
             if content_length == -1:
                 logger.error(
-                    f"Content-Length header not found in received headers: {header_str!r}"
+                    "Content-Length header not found in received headers: "
+                    f"{header_str!r}"
                 )
                 return None
 
@@ -359,7 +375,7 @@ class LeanLspClient:
 
             message = json.loads(json_body_str)
 
-            # logger.debug(f"LSP Received: {json.dumps(message, indent=2)}") # Verbose logging
+            # logger.debug(f"LSP Received: {json.dumps(message, indent=2)}") # Verbose
             return message
 
         except asyncio.TimeoutError:
@@ -404,7 +420,8 @@ class LeanLspClient:
                 if message is None:
                     if not self._closed:
                         logger.warning(
-                            "Message reader received None, likely connection closed or parse error. Exiting loop."
+                            "Message reader received None, likely connection closed "
+                            "or parse error. Exiting loop."
                         )
                     break  # Exit loop if read fails or connection closes
 
@@ -433,17 +450,22 @@ class LeanLspClient:
                                     future.set_result(message.get("result"))
                             else:
                                 logger.warning(
-                                    f"Received response for already cancelled request ID {request_id}"
+                                    "Received response for already cancelled "
+                                    f"request ID {request_id}"
                                 )
                         else:
-                            # Could be a response to a request that already timed out/cancelled, or unexpected
+                            # Could be a response to a request that already
+                            # timed out/cancelled, or unexpected
                             logger.warning(
-                                f"Received response for ID {request_id}, but it was not pending."
+                                f"Received response for ID {request_id}, but it was "
+                                "not pending."
                             )
                     except ValueError:
-                        # This happens if server sends a response with a non-integer ID, which shouldn't occur if it's replying to us.
+                        # This happens if server sends a response with a non-integer ID,
+                        # which shouldn't occur if it's replying to us.
                         logger.warning(
-                            f"Received response with non-integer ID '{msg_id}', which was not expected from our requests."
+                            f"Received response with non-integer ID '{msg_id}', "
+                            "which was not expected from our requests."
                         )
                     except Exception as e:
                         # Catch other potential errors during future handling
@@ -468,22 +490,27 @@ class LeanLspClient:
                         diags_data = message.get("params", {}).get("diagnostics", [])
                         uri = message.get("params", {}).get("uri")
                         logger.info(
-                            f"Received textDocument/publishDiagnostics with {len(diags_data)} diagnostics for URI {uri}."
+                            "Received textDocument/publishDiagnostics with "
+                            f"{len(diags_data)} diagnostics for URI {uri}."
                         )
                         logger.debug(
-                            f"Diagnostics data (first item snippet): {str(diags_data[0])[:200]}..."
+                            "Diagnostics data (first item snippet): "
+                            f"{str(diags_data[0])[:200]}..."
                             if diags_data
                             else "No diagnostics in this message"
                         )
                         logger.debug(
-                            f"Queueing publishDiagnostics notification. Queue size approx: {self._notifications_queue.qsize() + 1}"
+                            "Queueing publishDiagnostics notification. "
+                            "Queue size approx: "
+                            f"{self._notifications_queue.qsize() + 1}"
                         )
                         await self._notifications_queue.put(message)
                     elif msg_method == "$/lean/fileProgress":
                         # Lean sends progress updates. Log them for debugging if needed.
                         progress_params = message.get("params", {})
                         logger.debug(f"Lean File Progress: {progress_params}")
-                        # Optionally put on queue if needed downstream: await self._notifications_queue.put(message)
+                        # Optionally put on queue if needed downstream:
+                        # await self._notifications_queue.put(message)
                     else:
                         logger.debug(f"Ignoring unhandled notification: {msg_method}")
 
@@ -492,10 +519,13 @@ class LeanLspClient:
                 elif msg_method is not None and msg_id is not None:
                     # This is where 'register_lean_watcher' likely falls.
                     logger.warning(
-                        f"Received unexpected request from server (Method: {msg_method}, ID: {msg_id}). Ignoring."
+                        "Received unexpected request from server (Method: "
+                        f"{msg_method}, ID: {msg_id}). Ignoring."
                     )
-                    # For this tool's purpose, we don't need to respond to server requests.
-                    # A fully compliant client might send back a MethodNotFound error response.
+                    # For this tool's purpose, we don't need to respond to server
+                    # requests.
+                    # A fully compliant client might send back a MethodNotFound error
+                    # response.
 
                 # --- Case 4: Unknown message structure ---
                 else:
@@ -539,7 +569,7 @@ class LeanLspClient:
             json_body = json.dumps(message).encode("utf-8")
             header = f"Content-Length: {len(json_body)}\r\n\r\n".encode()
 
-            # logger.debug(f"LSP Sending: {json.dumps(message, indent=2)}") # Verbose logging
+            # logger.debug(f"LSP Sending: {json.dumps(message, indent=2)}") # Verbose
             self.writer.write(header)
             self.writer.write(json_body)
             await self.writer.drain()
@@ -609,7 +639,8 @@ class LeanLspClient:
             Exception
         ) as e:  # Includes ConnectionError from _write_message, LspResponseError
             logger.error(
-                f"Error sending request {request_id} ({method}) or awaiting response: {e}"
+                "Error sending request "
+                f"{request_id} ({method}) or awaiting response: {e}"
             )
             self._pending_requests.pop(request_id, None)  # Clean up on other errors too
             raise  # Re-raise original error
@@ -768,7 +799,8 @@ class LeanLspClient:
             await self.send_request("shutdown")
             logger.info("LSP shutdown request acknowledged by server.")
         except (ConnectionError, asyncio.TimeoutError, LspResponseError) as e:
-            # Log error but proceed to exit/close anyway, as server might be unresponsive
+            # Log error but proceed to exit/close anyway, as server might be
+            # unresponsive
             logger.warning(
                 f"Error during LSP shutdown request (proceeding to exit/close): {e}"
             )
@@ -819,7 +851,8 @@ class LeanLspClient:
             except Exception as e:
                 logger.warning(f"Error closing LSP writer: {e}")
         self.writer = None
-        # Reader is associated with the pipe/protocol, closing pipe implicitly handles it.
+        # Reader is associated with the pipe/protocol, closing pipe implicitly
+        # handles it.
 
         # 3. Terminate process if still running
         if self.process and self.process.returncode is None:
@@ -829,11 +862,13 @@ class LeanLspClient:
                 # Wait briefly for termination, then kill if necessary
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
                 logger.info(
-                    f"Lean server process terminated with code {self.process.returncode}."
+                    "Lean server process terminated with code "
+                    f"{self.process.returncode}."
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Lean server process did not terminate gracefully after 5s, killing."
+                    "Lean server process did not terminate gracefully after 5s, "
+                    "killing."
                 )
                 try:
                     self.process.kill()
@@ -841,7 +876,8 @@ class LeanLspClient:
                     logger.info("Lean server process killed.")
                 except ProcessLookupError:
                     logger.warning(
-                        "Process already killed or finished by the time kill was attempted."
+                        "Process already killed or finished by the time kill was "
+                        "attempted."
                     )
                 except Exception as kill_e:
                     logger.error(f"Error killing lean process: {kill_e}")
@@ -888,7 +924,8 @@ class LeanLspClient:
         drain_timeout = 0.01
 
         logger.debug(
-            f"Entering get_diagnostics. Approx queue size: {self._notifications_queue.qsize()}"
+            "Entering get_diagnostics. Approx queue size: "
+            f"{self._notifications_queue.qsize()}"
         )
 
         while True:
@@ -901,7 +938,8 @@ class LeanLspClient:
                     self._notifications_queue.get(), timeout=current_timeout
                 )
                 logger.debug(
-                    f"Retrieved notification from queue: method='{notification.get('method')}'"
+                    "Retrieved notification from queue: "
+                    f"method='{notification.get('method')}'"
                 )
 
                 if notification.get("method") == "textDocument/publishDiagnostics":
@@ -915,15 +953,18 @@ class LeanLspClient:
                     )
                     if diags:  # Log content snippet only if diagnostics are present
                         logger.debug(
-                            f"Diagnostic content (first item snippet): {str(diags[0])[:200]}..."
+                            "Diagnostic content (first item snippet): "
+                            f"{str(diags[0])[:200]}..."
                         )
                     else:
                         logger.debug("No diagnostic items within this notification.")
                     diagnostics.extend(diags)
                 else:
-                    # Handle other potentially interesting notifications if needed in the future
+                    # Handle other potentially interesting notifications if needed in
+                    # the future
                     logger.debug(
-                        f"Ignoring notification type during diagnostic collection: {notification.get('method')}"
+                        "Ignoring notification type during diagnostic collection: "
+                        f"{notification.get('method')}"
                     )
 
                 self._notifications_queue.task_done()
@@ -931,7 +972,8 @@ class LeanLspClient:
             except (asyncio.TimeoutError, asyncio.QueueEmpty):
                 # This is the expected way to exit the loop when the queue is empty
                 logger.debug(
-                    f"Queue appears empty (timeout={current_timeout}s). Exiting diagnostic collection loop."
+                    f"Queue appears empty (timeout={current_timeout}s). Exiting "
+                    "diagnostic collection loop."
                 )
                 break
             except Exception as e:
@@ -967,15 +1009,16 @@ async def analyze_lean_failure(
 ) -> str:
     """
     Analyzes failing Lean code using LSP. It waits for initial diagnostics,
-    then annotates the code with single-line goal states line-by-line (skipping empty lines),
-    and finally appends sections for both reported LSP diagnostics and the original
-    build failure message.
+    then annotates the code with single-line goal states line-by-line
+    (skipping empty lines), and finally appends sections for both reported LSP
+    diagnostics and the original build failure message.
 
     Args:
         lean_code (str): The Lean code string to analyze.
         lean_executable_path (str): Path to the 'lean' executable.
         cwd (str): Working directory for the lean server process (temp project).
-        shared_lib_path (Optional[pathlib.Path]): Path to the root of the shared library dependency.
+        shared_lib_path (Optional[pathlib.Path]): Path to the root of the shared
+            library dependency.
         timeout_seconds (int): Timeout for individual LSP requests (like get_goal).
         fallback_error (str): Error message (typically lake build output) to include.
 
@@ -1020,7 +1063,8 @@ async def analyze_lean_failure(
             10.0  # Wait longer for server to process and send diagnostics
         )
         logger.info(
-            f"Waiting {initial_wait_seconds}s for initial server processing & diagnostics..."
+            f"Waiting {initial_wait_seconds}s for initial server processing "
+            "& diagnostics..."
         )
         await asyncio.sleep(initial_wait_seconds)
 
@@ -1028,7 +1072,8 @@ async def analyze_lean_failure(
         # Use a shorter timeout here as we expect diagnostics might already be queued
         diagnostic_collection_timeout = 5.0
         logger.info(
-            f"Collecting all available diagnostics (timeout={diagnostic_collection_timeout}s)..."
+            "Collecting all available diagnostics "
+            f"(timeout={diagnostic_collection_timeout}s)..."
         )
         collected_diagnostics = await client.get_diagnostics(
             timeout=diagnostic_collection_timeout
@@ -1036,12 +1081,14 @@ async def analyze_lean_failure(
         logger.info(f"Collected {len(collected_diagnostics)} diagnostics initially.")
         if collected_diagnostics:
             logger.debug(
-                f"Collected diagnostics sample (first): {str(collected_diagnostics[0])[:300]}..."
+                "Collected diagnostics sample (first): "
+                f"{str(collected_diagnostics[0])[:300]}..."
             )
 
             # --- Pre-process diagnostics for inline insertion ---
             logger.debug(
-                f"Preprocessing {len(collected_diagnostics)} diagnostics for inline reporting..."
+                f"Preprocessing {len(collected_diagnostics)} diagnostics for "
+                "inline reporting..."
             )
             formatted_diags_count = 0
             seen_diags = set()
@@ -1078,7 +1125,8 @@ async def analyze_lean_failure(
 
                     # Format the diagnostic message
                     diag_log_line = (
-                        f"-- {severity}: (Reported for L{start_line_disp}:{start_char_disp}"
+                        f"-- {severity}: "
+                        f"(Reported for L{start_line_disp}:{start_char_disp}"
                         f"-L{end_line_disp}:{end_char_disp}): {message}"
                     )
                     diagnostics_by_line[start_line_idx].append(diag_log_line)
@@ -1090,7 +1138,6 @@ async def analyze_lean_failure(
         # --- Step 3: Annotate with Goals and Inline Diagnostics ---
         logger.info("Starting line-by-line goal annotation and diagnostic insertion...")
         for i, line_content in enumerate(code_lines):
-            goal_added_for_line = False  # Flag to track if goal was added
             # Query goal ONLY if the line has content
             if line_content.strip():
                 current_goal_str = "Error: Could not retrieve goal state"  # Default msg
@@ -1140,7 +1187,8 @@ async def analyze_lean_failure(
 
                 except asyncio.TimeoutError:
                     logger.error(
-                        f"Timeout ({timeout_seconds}s) retrieving goal state before line {i + 1}"
+                        f"Timeout ({timeout_seconds}s) retrieving goal state before "
+                        f"line {i + 1}"
                     )
                     current_goal_str = "Error: Timeout retrieving goal state"
                 except Exception as goal_e:
@@ -1163,7 +1211,6 @@ async def analyze_lean_failure(
                 # Add the single-line goal comment
                 goal_comment_line = f"-- Goal: {single_line_goal}"
                 annotated_lines.append(goal_comment_line)
-                goal_added_for_line = True
 
                 # Always append the original code line content
                 annotated_lines.append(line_content)
@@ -1203,7 +1250,8 @@ async def analyze_lean_failure(
     # --- Step 4 & 5: Append ONLY Build Error (LSP Diags are inline) ---
     final_output_lines = annotated_lines  # Start with the annotated code + inline diags
 
-    # Section for Original Build Failure Report (Fallback Error) - Always include if analysis ran
+    # Section for Original Build Failure Report (Fallback Error)
+    # - Always include if analysis ran
     if analysis_succeeded:
         final_output_lines.append("\n-- Build System Output (lake build) --")
         if fallback_error and fallback_error != "LSP analysis failed.":

@@ -31,7 +31,8 @@ except ImportError:
     except ImportError as e:
         print(f"Error importing project modules: {e}")
         print(
-            "Ensure the script is run from the project root or the package is installed."
+            "Ensure the script is run from the project root "
+            "or the package is installed."
         )
         sys.exit(1)
 
@@ -66,7 +67,7 @@ async def setup_test_data(db_path: str):
             return False
 
     kb_storage.initialize_database(db_path)
-    client = None
+    # client = None # F841 - removed
 
     items_to_create = []
     dependency_names = []
@@ -86,7 +87,10 @@ end MyDefs
         unique_name=DEF_TREE_TYPE_NAME,  # "MyDefs.MyTree"
         item_type=ItemType.DEFINITION,
         description_nl="A simple binary tree structure.",
-        latex_statement=r"Inductive type $\texttt{MyTree } \alpha$ with constructors $\texttt{leaf}$ and $\texttt{node}$.",
+        latex_statement=(
+            r"Inductive type $\texttt{MyTree } \alpha$ "
+            r"with constructors $\texttt{leaf}$ and $\texttt{node}$."
+        ),
         lean_code=tree_type_lean_code,
         status=ItemStatus.DEFINITION_ADDED,
     )
@@ -100,20 +104,24 @@ end MyDefs
 universe u
 namespace MyDefs
 
--- Requires MyTree definition to be available (implicitly, as it's in the same namespace)
+-- Requires MyTree definition to be available
+-- (implicitly, as it's in the same namespace)
 
 -- Define the mirror function within the MyDefs namespace
 def mirror {α : Type u} (t : MyTree α) : MyTree α :=
   match t with
   | MyTree.leaf => MyTree.leaf -- Can use shorter names within the namespace
-  | MyTree.node l x r => MyTree.node (mirror r) x (mirror l) -- Recursive calls use shorter name
+  | MyTree.node l x r =>
+    MyTree.node (mirror r) x (mirror l) -- Recursive calls use shorter name
 
 end MyDefs
 """.strip()
     mirror_func_item = kb_storage.KBItem(
         unique_name=DEF_MIRROR_FUNC_NAME,  # "MyDefs.mirror"
         item_type=ItemType.DEFINITION,
-        description_nl="Mirrors a binary tree by swapping left and right children recursively.",
+        description_nl=(
+            "Mirrors a binary tree by swapping left and right children recursively."
+        ),
         latex_statement=r"Function $\text{mirror}(t)$ defined recursively on trees.",
         lean_code=mirror_func_lean_code,
         status=ItemStatus.DEFINITION_ADDED,
@@ -131,7 +139,8 @@ end MyDefs
         try:
             await kb_storage.save_kb_item(item, client=None, db_path=db_path)
             logger.info(
-                f"Created dependency/definition item: {item.unique_name} with status {item.status.name if item.status else 'None'}"
+                f"Created dependency/definition item: {item.unique_name} "
+                f"with status {item.status.name if item.status else 'None'}"
             )  # Adjusted status logging
         except Exception as e:
             logger.error(f"Failed to save dependency {item.unique_name}: {e}")
@@ -142,7 +151,9 @@ end MyDefs
     # --- Create Target Item (Theorem) ---
     # (Theorem definition remains the same)
     target_latex_statement = r"""
-For any binary tree $t$ (over some type $\alpha$), let $\text{mirror}(t)$ be the tree obtained by recursively swapping left and right children. Then $\text{mirror}(\text{mirror}(t)) = t$.
+For any binary tree $t$ (over some type $\alpha$),
+let $\text{mirror}(t)$ be the tree obtained by recursively swapping left and right
+children. Then $\text{mirror}(\text{mirror}(t)) = t$.
 """.strip()
     target_latex_proof = r"""
 We prove by induction on the structure of the tree $t$.
@@ -150,14 +161,23 @@ We prove by induction on the structure of the tree $t$.
 \textbf{Base Case:} $t = \text{leaf}$.
 We need to show $\text{mirror}(\text{mirror}(\text{leaf})) = \text{leaf}$.
 By definition, $\text{mirror}(\text{leaf}) = \text{leaf}$.
-So, $\text{mirror}(\text{mirror}(\text{leaf})) = \text{mirror}(\text{leaf}) = \text{leaf}$. The base case holds.
+So, $\text{mirror}(\text{mirror}(\text{leaf})) = \text{mirror}(\text{leaf})$
+$= \text{leaf}$.
+The base case holds.
 
 \textbf{Inductive Step:} $t = \text{node}(l, x, r)$.
 Assume the property holds for the subtrees $l$ and $r$.
-Inductive Hypotheses (IH): $\text{mirror}(\text{mirror}(l)) = l$ (IH$_l$) and $\text{mirror}(\text{mirror}(r)) = r$ (IH$_r$).
-We need to show $\text{mirror}(\text{mirror}(\text{node}(l, x, r))) = \text{node}(l, x, r)$.
+Inductive Hypotheses (IH): $\text{mirror}(\text{mirror}(l)) = l$ (IH$_l$) and
+$\text{mirror}(\text{mirror}(r)) = r$ (IH$_r$).
+We need to show $\text{mirror}(\text{mirror}(\text{node}(l, x, r)))
+= \text{node}(l, x, r)$.
 Let's compute the left side:
-\begin{align*} \text{LHS} &= \text{mirror}(\text{mirror}(\text{node}(l, x, r))) \\ &= \text{mirror}(\text{node}(\text{mirror}(r), x, \text{mirror}(l))) \quad (\text{by def of mirror}) \\ &= \text{node}(\text{mirror}(\text{mirror}(l)), x, \text{mirror}(\text{mirror}(r))) \quad (\text{by def of mirror}) \\ &= \text{node}(l, x, r) \quad (\text{by IH}_l \text{ and IH}_r)\end{align*}
+\begin{align*} \text{LHS} &= \text{mirror}(\text{mirror}(\text{node}(l, x, r))) \\
+&= \text{mirror}(\text{node}(\text{mirror}(r), x, \text{mirror}(l)))
+   \quad (\text{by def of mirror}) \\
+&= \text{node}(\text{mirror}(\text{mirror}(l)), x, \text{mirror}(\text{mirror}(r)))
+   \quad (\text{by def of mirror}) \\
+&= \text{node}(l, x, r) \quad (\text{by IH}_l \text{ and IH}_r)\end{align*}
 This matches the right side. The inductive step holds.
 
 By induction, the property holds for all trees $t$. QED.
@@ -167,7 +187,8 @@ By induction, the property holds for all trees $t$. QED.
         unique_name=TARGET_ITEM_NAME,  # "MyProofs.MyTree.mirror_mirror"
         item_type=ItemType.THEOREM,
         description_nl="Mirroring a tree twice returns the original tree.",
-        plan_dependencies=dependency_names,  # Use the collected list: ["MyDefs.MyTree", "MyDefs.mirror"]
+        # Use the collected list: ["MyDefs.MyTree", "MyDefs.mirror"]
+        plan_dependencies=dependency_names,
         latex_statement=target_latex_statement,
         latex_proof=target_latex_proof,
         lean_code="",  # Start with no lean code for the theorem
@@ -176,7 +197,8 @@ By induction, the property holds for all trees $t$. QED.
     try:
         await kb_storage.save_kb_item(target_item, client=None, db_path=db_path)
         logger.info(
-            f"Created target item: {target_item.unique_name} with status {target_item.status.name if target_item.status else 'None'}"
+            f"Created target item: {target_item.unique_name} "
+            f"with status {target_item.status.name if target_item.status else 'None'}"
         )  # Adjusted status logging
     except Exception as e:
         logger.error(f"Failed to save target item {target_item.unique_name}: {e}")
@@ -219,11 +241,12 @@ async def main():
                 unique_name=TARGET_ITEM_NAME,
                 client=client,
                 db_path=TEST_DB_PATH,
-                # lake_executable_path='path/to/lake' # Optional: if lake is not in PATH
+                # lake_executable_path='path/to/lake' # Optional: if lake not in PATH
                 # timeout_seconds=180 # Optional: increase timeout
             )
             logger.info(
-                f"generate_and_verify_lean finished. Result: {'Success' if lean_success else 'Failure'}"
+                "generate_and_verify_lean finished. Result: "
+                f"{'Success' if lean_success else 'Failure'}"
             )
         else:
             logger.critical("lean_processor or generate_and_verify_lean not available.")
@@ -240,11 +263,13 @@ async def main():
             f"  Final Status: {final_item.status.name if final_item.status else 'None'}"
         )  # Adjusted status logging
         logger.info(
-            f"  Final Lean Code (len={len(final_item.lean_code or '')}):\n--- START ---\n{final_item.lean_code}\n--- END ---"
+            f"  Final Lean Code (len={len(final_item.lean_code or '')}):\n"
+            f"--- START ---\n{final_item.lean_code}\n--- END ---"
         )
         if final_item.status == kb_storage.ItemStatus.LEAN_VALIDATION_FAILED:
             logger.warning(
-                f"  Lean Error Log:\n--- START ---\n{final_item.lean_error_log}\n--- END ---"
+                f"  Lean Error Log:\n--- START ---\n"
+                f"{final_item.lean_error_log}\n--- END ---"
             )
         elif final_item.lean_error_log:
             logger.debug(f"  Last Lean Error Log: {final_item.lean_error_log}")

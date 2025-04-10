@@ -17,6 +17,7 @@ import os
 # Make sure pytest can find the src modules
 import sys
 import warnings  # Added to check for warnings
+from typing import Optional  # Added to fix F821
 
 import pytest
 
@@ -30,7 +31,8 @@ try:
     from lean_automator.config.loader import APP_CONFIG, get_gemini_api_key
 except ImportError:
     warnings.warn(
-        "lean_automator.config.loader.APP_CONFIG and get_gemini_api_key not found. Using fallbacks and environment variables directly.",
+        "lean_automator.config.loader.APP_CONFIG and get_gemini_api_key not found."
+        " Using fallbacks and environment variables directly.",
         ImportWarning,
     )
     # Provide fallbacks if the config loader isn't available
@@ -47,7 +49,7 @@ from lean_automator.llm.caller import (
     GeminiClient,
     GeminiCostTracker,
     ModelCostInfo,  # Import if needed for direct assertion
-    )
+)
 
 # Import specific types/exceptions needed for assertions and setup
 try:
@@ -104,7 +106,8 @@ def api_key() -> str:
     # Also skip if essential Google libraries failed to import
     if not genai_types or not google_api_exceptions:
         pytest.skip(
-            "Required google.generativeai or google.api_core libraries not found. Skipping integration tests."
+            "Required google.generativeai or google.api_core libraries not found. "
+            "Skipping integration tests."
         )
     return key
 
@@ -266,14 +269,15 @@ class TestGeminiClientIntegration:
     async def test_invalid_generation_model_name_raises_error(
         self, client: GeminiClient
     ):
-        """Verify using an invalid generation model name raises an expected API error."""
+        """Verify using an invalid generation model name raises an API error."""
         prompt = "This should not be generated."
         invalid_model = "invalid-model-name-does-not-exist-12345"
         # Expect an exception, likely related to resource not found or invalid argument
         with pytest.raises(Exception) as excinfo:
             await client.generate(prompt, model=invalid_model)
 
-        # Check the cause of the exception if possible (depends on client's error wrapping)
+        # Check the cause of the exception if possible (depends on client's error
+        # wrapping)
         cause = getattr(excinfo.value, "__cause__", None)
         # Check if the exception or its cause is one of the expected Google API errors
         assert isinstance(
@@ -293,10 +297,12 @@ class TestGeminiClientIntegration:
                 ValueError,
             ),
         ), (
-            f"Expected Google API error or ValueError for invalid model, but got {type(excinfo.value)} with cause {type(cause)}"
+            "Expected Google API error or ValueError for invalid model, "
+            f"but got {type(excinfo.value)} with cause {type(cause)}"
         )
         print(
-            f"\nCaught expected error for invalid generation model: {excinfo.value} (Cause: {cause})"
+            f"\nCaught expected error for invalid generation model: {excinfo.value}"
+            f" (Cause: {cause})"
         )
 
     @pytest.mark.asyncio
@@ -353,13 +359,18 @@ class TestGeminiClientIntegration:
             assert final_total_cost > initial_total_cost, (
                 "Total estimated cost did not increase"
             )
+            cost_increase = final_total_cost - initial_total_cost
             print(
-                f"\nCost Tracking: Calls={model_usage.get('calls')}, Input={model_usage.get('input_units')}, Output={model_usage.get('output_units')}, Est. Cost Increase={final_total_cost - initial_total_cost:.6f}"
+                f"\nCost Tracking: Calls={model_usage.get('calls')}, "
+                f"Input={model_usage.get('input_units')}, "
+                f"Output={model_usage.get('output_units')}, "
+                f"Est. Cost Increase={cost_increase:.6f}"
             )
         else:
             # If cost data is missing, total cost shouldn't change, print warning
             print(
-                f"\nWarning: Cost data for model '{target_model}' missing in cost tracker. Cannot verify cost increase."
+                f"\nWarning: Cost data for model '{target_model}' missing in "
+                "cost tracker. Cannot verify cost increase."
             )
             assert final_total_cost == pytest.approx(initial_total_cost), (
                 "Total cost changed unexpectedly despite missing model cost data"
@@ -397,8 +408,9 @@ class TestGeminiClientIntegration:
             response = await client.embed_content(contents, task_type)
 
             # Debugging output added based on previous run
+            resp_len = len(response) if isinstance(response, list) else "N/A"
             print(
-                f"\nDEBUG (List Embed): Received type={type(response)}, len={len(response) if isinstance(response, list) else 'N/A'}"
+                f"\nDEBUG (List Embed): Received type={type(response)}, len={resp_len}"
             )
             if isinstance(response, list) and len(response) > 0:
                 print(f"DEBUG (List Embed): First element type={type(response[0])}")
@@ -433,19 +445,23 @@ class TestGeminiClientIntegration:
             )
             assert isinstance(response[0], list), "Embedding is not a list"
             assert len(response[0]) == output_dim, (
-                f"Embedding dimension mismatch: Expected {output_dim}, Got {len(response[0])}"
+                f"Embedding dimension mismatch: Expected {output_dim}, "
+                f"Got {len(response[0])}"
             )
         except google_api_exceptions.InvalidArgument as e:
-            # Skip if the API/model specifically rejects output_dimensionality for this model
+            # Skip if the API/model specifically rejects output_dimensionality for
+            # this model
             if "output_dimensionality" in str(e).lower() and (
                 "supported" in str(e).lower() or "invalid" in str(e).lower()
             ):
                 pytest.skip(
-                    f"API or model {TEST_EMBED_MODEL} might not support output_dimensionality={output_dim}. Skipping. Error: {e}"
+                    f"API or model {TEST_EMBED_MODEL} might not support "
+                    f"output_dimensionality={output_dim}. Skipping. Error: {e}"
                 )
             else:  # Fail on other InvalidArgument errors
                 pytest.fail(
-                    f"Embedding with optional args failed with unexpected InvalidArgument: {e}"
+                    "Embedding with optional args failed with unexpected "
+                    f"InvalidArgument: {e}"
                 )
         except Exception as e:
             # Fail on any other exceptions
@@ -500,17 +516,22 @@ class TestGeminiClientIntegration:
                 google_api_exceptions.PermissionDenied,
             ),
         ), (
-            f"Expected Google API error for invalid embedding model, but got {type(excinfo.value)} with cause {type(cause)}"
+            "Expected Google API error for invalid embedding model, "
+            f"but got {type(excinfo.value)} with cause {type(cause)}"
         )
         print(
-            f"\nCaught expected error for invalid embedding model: {excinfo.value} (Cause: {cause})"
+            f"\nCaught expected error for invalid embedding model: {excinfo.value}"
+            f" (Cause: {cause})"
         )
 
     @pytest.mark.asyncio
     async def test_embedding_cost_tracking_updates(
         self, client: GeminiClient, cost_tracker: GeminiCostTracker
     ):
-        """Verify cost tracker updates correctly for embedding calls (or handles missing metadata)."""
+        """
+        Verify cost tracker updates correctly for embedding calls
+        (or handles missing metadata).
+        """
         content = "Track embedding cost for this sentence."
         task_type = "RETRIEVAL_DOCUMENT"
         target_model = TEST_EMBED_MODEL  # Embedding model being tested
@@ -545,7 +566,8 @@ class TestGeminiClientIntegration:
                 )
                 if metadata_warning_found:
                     print(
-                        "\nNote: Live API did not return usage_metadata for embedding call, cost tracking likely skipped."
+                        "\nNote: Live API did not return usage_metadata for embedding"
+                        " call, cost tracking likely skipped."
                     )
         except Exception as e:
             pytest.fail(f"API call for embedding cost tracking test failed: {e}")
@@ -585,11 +607,15 @@ class TestGeminiClientIntegration:
                 assert final_total_cost > initial_total_cost, (
                     "Total estimated cost did not increase"
                 )
+                cost_increase = final_total_cost - initial_total_cost
                 print(
-                    f"\nCost Tracking (Metadata Found): Calls={final_calls}, Input={final_input_units}, Est. Cost Increase={final_total_cost - initial_total_cost:.6f}"
+                    f"\nCost Tracking (Metadata Found): Calls={final_calls}, "
+                    f"Input={final_input_units}, "
+                    f"Est. Cost Increase={cost_increase:.6f}"
                 )
             else:
                 print(
-                    f"\nWarning: Cost data for model '{target_model}' missing. Cannot verify cost increase."
+                    f"\nWarning: Cost data for model '{target_model}' missing. "
+                    "Cannot verify cost increase."
                 )
                 assert final_total_cost == pytest.approx(initial_total_cost)

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import warnings
+from typing import Optional
 
 import pytest
 
@@ -142,7 +143,8 @@ async def test_compile_success_no_deps_with_cache(test_db, temp_cache_dir, monke
     assert success is True, f"Compile failed: {message}"
     retrieved = get_kb_item_by_name(item_name, db_path=test_db)
     assert retrieved is not None and retrieved.status == ItemStatus.PROVEN
-    # Optionally check for cache files existence if needed, adjusting paths for hardcoded temp lib name
+    # Optionally check for cache files existence if needed, adjusting paths
+    # for hardcoded temp lib name
 
 
 @pytest.mark.asyncio
@@ -168,8 +170,12 @@ async def test_compile_success_with_deps_cached(test_db, temp_cache_dir, monkeyp
 
     # 2. Compile target (Item B depends on A) - should reuse cached dep
     target_name = "Test.TargetB.UsesCached"
-    # Import uses the persistent library source directory name (matches lean_interaction.py hardcoding)
-    target_code = f"import {SHARED_LIB_SRC_DIR}.Test.DepA.Cached\n\ntheorem useDepCached : depValueCached = 10 := rfl"
+    # Import uses the persistent library source directory name
+    # (matches lean_interaction.py hardcoding)
+    target_code = (
+        f"import {SHARED_LIB_SRC_DIR}.Test.DepA.Cached\n\n"
+        f"theorem useDepCached : depValueCached = 10 := rfl"
+    )
     target_item = KBItem(
         unique_name=target_name,
         item_type=ItemType.THEOREM,
@@ -282,8 +288,12 @@ async def test_compile_fail_missing_dependency_db(
 
     item_name = f"Test.MissingDepLake.{'Cache' if use_cache else 'NoCache'}"
     non_existent_dep = "Test.DoesNotExist"
-    # Import uses the persistent library source directory name (matches lean_interaction.py hardcoding)
-    lean_code = f"import {SHARED_LIB_SRC_DIR}.Test.DoesNotExist\n\ntheorem usesMissing : True := trivial"
+    # Import uses the persistent library source directory name
+    # (matches lean_interaction.py hardcoding)
+    lean_code = (
+        f"import {SHARED_LIB_SRC_DIR}.Test.DoesNotExist\n\n"
+        f"theorem usesMissing : True := trivial"
+    )
     item = KBItem(
         unique_name=item_name,
         item_type=ItemType.THEOREM,
@@ -342,8 +352,12 @@ async def test_compile_success_dep_proven_code_exists(test_db, monkeypatch):
     assert dep_success is True, f"Dependency compilation failed: {dep_msg}"
 
     target_name = "Test.TargetDepProvenCodeExists.NoCache"
-    # Import uses the persistent library source directory name (matches lean_interaction.py hardcoding)
-    target_code = f"import {SHARED_LIB_SRC_DIR}.Test.DepProvenCodeExists.NoCache\n\ntheorem useVerifiedCodeExistsNC : depValueCodeExistsNC = 20 := rfl"
+    # Import uses the persistent library source directory name
+    # (matches lean_interaction.py hardcoding)
+    target_code = (
+        f"import {SHARED_LIB_SRC_DIR}.Test.DepProvenCodeExists.NoCache\n\n"
+        f"theorem useVerifiedCodeExistsNC : depValueCodeExistsNC = 20 := rfl"
+    )
     target_item = KBItem(
         unique_name=target_name,
         item_type=ItemType.THEOREM,
@@ -368,7 +382,10 @@ async def test_compile_success_dep_proven_code_exists(test_db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_compile_success_dep_built_by_lake(test_db, monkeypatch):
-    """Test Lake successfully building dependency from source present in shared lib. Cache unset."""
+    """
+    Test Lake successfully building dependency from source present in shared lib.
+    Cache unset.
+    """
     monkeypatch.delenv(CACHE_ENV_VAR, raising=False)
     dep_name = "Test.DepNeedsBuilding.NoCache"
     dep_item = KBItem(
@@ -382,7 +399,8 @@ async def test_compile_success_dep_built_by_lake(test_db, monkeypatch):
     # Save the dependency item to the DB (status PENDING)
     await save_kb_item(dep_item, client=None, db_path=test_db)
 
-    # Manually place the dependency's source code in the expected shared library location
+    # Manually place the dependency's source code in the expected shared
+    # library location
     # using the hardcoded source directory name
     shared_lib_path_str = get_lean_automator_shared_lib_path()
     if shared_lib_path_str:
@@ -394,17 +412,23 @@ async def test_compile_success_dep_built_by_lake(test_db, monkeypatch):
         # Generate the full code including potential imports for the dependency
         import_block = _generate_imports_for_target(dep_item)
         separator = "\n\n" if import_block and dep_item.lean_code else ""
-        full_dep_code = f"{import_block}{separator}{str(dep_item.lean_code)}"  # Ensure lean_code is str
+        full_dep_code = f"{import_block}{separator}{str(dep_item.lean_code)}"
+        # Ensure lean_code is str
         dep_dest_path.write_text(full_dep_code, encoding="utf-8")
         print(f"\nManually placed dependency code at: {dep_dest_path}")  # For debugging
     else:
         pytest.skip(
-            "LEAN_AUTOMATOR_SHARED_LIB_PATH not set, cannot place dependency code manually."
+            "LEAN_AUTOMATOR_SHARED_LIB_PATH not set, cannot place dependency"
+            " code manually."
         )
 
     target_name = "Test.TargetUsesBuiltDep.NoCache"
-    # Import uses the persistent library source directory name (matches lean_interaction.py hardcoding)
-    target_code = f"import {SHARED_LIB_SRC_DIR}.Test.DepNeedsBuilding.NoCache\n\ntheorem useBuiltDepNC : depValueNeedsBuildingNC = 30 := rfl"
+    # Import uses the persistent library source directory name
+    # (matches lean_interaction.py hardcoding)
+    target_code = (
+        f"import {SHARED_LIB_SRC_DIR}.Test.DepNeedsBuilding.NoCache\n\n"
+        f"theorem useBuiltDepNC : depValueNeedsBuildingNC = 30 := rfl"
+    )
     target_item = KBItem(
         unique_name=target_name,
         item_type=ItemType.THEOREM,
@@ -416,7 +440,8 @@ async def test_compile_success_dep_built_by_lake(test_db, monkeypatch):
     )
     await save_kb_item(target_item, client=None, db_path=test_db)
 
-    # Now compile the target; Lake should find and build the dependency from the source we placed
+    # Now compile the target; Lake should find and build the dependency
+    # from the source we placed
     success, message = await check_and_compile_item(
         target_name, db_path=test_db, lake_executable_path=LAKE_EXEC_PATH
     )
@@ -490,7 +515,8 @@ async def test_compile_fail_timeout_mocked(test_db, mocker):
 
     def mock_run_side_effect(*args, **kwargs):
         command_args = kwargs.get("args", args[0] if args else [])
-        # print(f"Mock subprocess.run called with: {command_args}") # Uncomment for debug
+        # Uncomment for debug
+        # print(f"Mock subprocess.run called with: {command_args}")
         # Handle lean --print-libdir call
         if "--print-libdir" in command_args:
             return mock_libdir_result
@@ -508,7 +534,7 @@ async def test_compile_fail_timeout_mocked(test_db, mocker):
         side_effect=mock_run_side_effect,
     )
     # Mock shutil.which if stdlib detection relies on it directly
-    mock_shutil_which = mocker.patch(
+    mocker.patch(
         "lean_automator.lean.interaction.shutil.which",
         return_value="/fake/path/to/lean",
     )

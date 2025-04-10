@@ -111,7 +111,10 @@ def _bytes_to_vector(data: bytes) -> Optional[np.ndarray]:
         # OPTIONAL: Dimensionality check
         # expected_dim = 768
         # if vector.size != expected_dim:
-        #    warnings.warn(f"Decoded vector has unexpected size {vector.size}, expected {expected_dim}")
+        #    warnings.warn(
+        #        f"Decoded vector has unexpected size {vector.size}, "
+        #        f"expected {expected_dim}"
+        #    )
         #    return None
         return vector
     except Exception as e:
@@ -133,7 +136,8 @@ def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
     """
     if v1.shape != v2.shape:
         warnings.warn(
-            f"Cannot compute cosine similarity for vectors with different shapes: {v1.shape} vs {v2.shape}"
+            "Cannot compute cosine similarity for vectors with different shapes: "
+            f"{v1.shape} vs {v2.shape}"
         )
         return -1.0  # Indicate error/invalid comparison
 
@@ -237,11 +241,13 @@ async def find_similar_items(
                 similarities.append((unique_name, score))
             else:
                 warnings.warn(
-                    f"Dimension mismatch for item '{unique_name}': Query={query_vector.shape}, Doc={doc_vector.shape}. Skipping."
+                    f"Dimension mismatch for item '{unique_name}': "
+                    f"Query={query_vector.shape}, Doc={doc_vector.shape}. Skipping."
                 )
         else:
             warnings.warn(
-                f"Could not decode embedding for item '{unique_name}' (ID: {item_id}). Skipping."
+                f"Could not decode embedding for item '{unique_name}' "
+                f"(ID: {item_id}). Skipping."
             )
 
     # 4. Sort by similarity (descending)

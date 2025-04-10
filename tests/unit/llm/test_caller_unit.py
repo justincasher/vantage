@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock  # For mocking
 import pytest
 
 # Assuming pytest runs from root and pytest.ini sets pythonpath=src
-# Adjust the import path based on your actual project structure if src isn't in pythonpath
+# Adjust import path based on your actual project structure if src not in pythonpath
 try:
     # Import the genai module itself for patching, and potential types
     import google.generativeai as genai
@@ -17,12 +17,12 @@ try:
     from google.api_core import exceptions as google_api_exceptions  # For API errors
 
     from lean_automator.llm.caller import (
-        FALLBACK_BACKOFF_FACTOR,
+        # FALLBACK_BACKOFF_FACTOR, # F401 unused
         # GenerationConfig, # Import necessary types if used by client directly
         # SafetySetting,
         # HarmCategory,
         FALLBACK_EMBEDDING_MODEL,  # Import fallback for testing
-        FALLBACK_MAX_RETRIES,
+        # FALLBACK_MAX_RETRIES, # F401 unused
         GeminiClient,
         GeminiCostTracker,
         ModelCostInfo,
@@ -32,7 +32,8 @@ try:
 except ImportError as e:
     # If the core dependencies are missing, skip all tests in this module.
     pytest.skip(
-        f"Skipping test module: Failed to import lean_automator components or google.generativeai. Error: {e}",
+        "Skipping test module: Failed to import lean_automator components"
+        f" or google.generativeai. Error: {e}",
         allow_module_level=True,
     )
 
@@ -75,10 +76,11 @@ MOCK_OTHER_EMBED_MODEL = "models/text-embedding-custom"
 
 
 # --- Mock google-genai structures (simplified) ---
-# (Keep existing mocks: MockUsageMetadata, MockPart, MockContent, MockCandidate, MockPromptFeedback, MockGenAIResponse)
+# (Keep mocks: MockUsageMetadata, MockPart, MockContent, MockCandidate,
+# MockPromptFeedback, MockGenAIResponse)
 @dataclass
 class MockUsageMetadata:
-    """Simplified mock for google.generativeai.types.GenerateContentResponse.usage_metadata."""
+    """Simplified mock for Gen Content Response usage_metadata."""
 
     prompt_token_count: int = 0
     candidates_token_count: int = 0  # Matches the attribute name in the actual library
@@ -232,7 +234,7 @@ def test_cost_tracker_init_invalid_json():
 
 
 def test_cost_tracker_init_incomplete_json():
-    """Test initialization with valid JSON but incomplete/wrong data format per entry."""
+    """Test init with valid JSON but incomplete/wrong data format per entry."""
     with pytest.warns(UserWarning) as record:
         tracker = GeminiCostTracker(
             model_costs_override=json.loads(INCOMPLETE_COST_JSON)
@@ -546,7 +548,7 @@ def test_client_init_missing_api_key(
 def test_client_init_missing_default_gen_model(
     mocker, mock_config_and_key, mock_genai_lib
 ):  # Use base mock
-    """Test client initialization raises ValueError if default_gemini_model is missing in APP_CONFIG."""
+    """Test client init raises ValueError if default gen model missing in APP_CONFIG."""
     _, _, _ = mock_genai_lib
     # Get the base mocked config and remove the key for this test
     base_config = mock_config_and_key.copy()  # Use copy
@@ -558,7 +560,7 @@ def test_client_init_missing_default_gen_model(
     mocker.patch("lean_automator.llm.caller.APP_CONFIG", base_config)
     # Key getter is already mocked by the fixture
 
-    # This should now raise the error because the value isn't found in arg (None) or APP_CONFIG
+    # Raise error: value not found in arg (None) or APP_CONFIG
     with pytest.raises(ValueError, match="Default Gemini generation model is missing"):
         GeminiClient()  # Call without providing the argument
 
@@ -566,7 +568,9 @@ def test_client_init_missing_default_gen_model(
 def test_client_init_missing_default_embed_model_uses_fallback(
     mocker, mock_config_and_key, mock_genai_lib
 ):  # Use base mock
-    """Test client uses fallback embedding model if default_embedding_model is missing in APP_CONFIG."""
+    """
+    Test fallback embed model used if default_embedding_model missing in APP_CONFIG.
+    """
     _, _, _ = mock_genai_lib
     # Get the base mocked config and remove the key for this test
     base_config = mock_config_and_key.copy()  # Use copy
@@ -580,11 +584,11 @@ def test_client_init_missing_default_embed_model_uses_fallback(
     # Key getter is already mocked
 
     # Now, the __init__ should not find the model in arg (None) or APP_CONFIG
-    # It should hit the 'if not _emb_model_name:' block and issue the fallback warning
-    with pytest.warns(
-        UserWarning,
-        match=f"Default embedding model not set .* Using fallback: {FALLBACK_EMBEDDING_MODEL}",
-    ):
+    # It should hit the 'if not _emb_model_name:' block and issue warning
+    match_str = (
+        f"Default embedding model not set .* Using fallback: {FALLBACK_EMBEDDING_MODEL}"
+    )
+    with pytest.warns(UserWarning, match=match_str):
         client = GeminiClient()
 
     assert client.default_embedding_model == FALLBACK_EMBEDDING_MODEL
@@ -593,7 +597,7 @@ def test_client_init_missing_default_embed_model_uses_fallback(
 def test_client_init_embed_model_adds_prefix(
     mocker, mock_config_and_key, mock_genai_lib
 ):  # Use base mock
-    """Test client adds 'models/' prefix to embedding model if missing in APP_CONFIG."""
+    """Test client adds 'models/' prefix to embed model if missing in APP_CONFIG."""
     _, _, _ = mock_genai_lib
     embed_model_no_prefix = "text-embedding-004"
     expected_model_with_prefix = f"models/{embed_model_no_prefix}"
@@ -606,12 +610,13 @@ def test_client_init_embed_model_adds_prefix(
     mocker.patch("lean_automator.llm.caller.APP_CONFIG", base_config)
     # Key getter is already mocked
 
-    # Now __init__ should find the model name in APP_CONFIG, detect the missing prefix,
+    # Now __init__ should find model name in APP_CONFIG, detect missing prefix,
     # add it, and issue the warning about resolution.
-    with pytest.warns(
-        UserWarning,
-        match=f"Resolved embedding model '{embed_model_no_prefix}' did not start with 'models/'. Using '{expected_model_with_prefix}'",
-    ):
+    match_str = (
+        f"Resolved embedding model '{embed_model_no_prefix}' "
+        f"did not start with 'models/'. Using '{expected_model_with_prefix}'"
+    )
+    with pytest.warns(UserWarning, match=match_str):
         client = GeminiClient()
 
     assert client.default_embedding_model == expected_model_with_prefix
@@ -789,7 +794,7 @@ async def test_client_embed_success_list_strings(
     contents_to_embed = ["Embed text one.", "Embed text two."]
     task_type = "SEMANTIC_SIMILARITY"
 
-    # Configure mock response for list input - assume key is 'embedding' containing a list
+    # Mock response for list input - assume 'embedding' key contains a list
     expected_vectors = [[0.1, 0.2], [0.3, 0.4]]
     mock_embed_response = {
         "embedding": expected_vectors,
@@ -912,7 +917,7 @@ async def test_client_embed_model_needs_prefix(
     content = "Text"
     task = "RETRIEVAL_QUERY"
     model_no_prefix = "text-embedding-custom"  # Different from default
-    expected_model_with_prefix = f"models/{model_no_prefix}"
+    # expected_model_with_prefix = f"models/{model_no_prefix}" # F841 unused
 
     # Mock response
     mock_embed_func.return_value = {
@@ -934,9 +939,10 @@ async def test_client_embed_model_needs_prefix(
         for msg in warning_messages
     )
 
-    # Verify the API call used the name *with* the prefix (as per current implementation which warns but still uses it)
+    # Verify the API call used the name *without* the prefix
+    # (as per current implementation which warns but still uses it)
     mock_embed_func.assert_called_once_with(
-        model=model_no_prefix,  # The code currently warns but doesn't add prefix in embed_content itself
+        model=model_no_prefix,  # Code warns but doesn't add prefix in call
         content=content,
         task_type=task,
     )
@@ -996,11 +1002,11 @@ async def test_client_embed_retry_logic(
         in msg
         for msg in warning_messages
     )
-    assert any(
-        f"Retrying API call for {MOCK_DEFAULT_EMBED_MODEL} in {backoff * (2**0):.2f} seconds"
-        in msg
-        for msg in warning_messages
+    retry_msg = (
+        f"Retrying API call for {MOCK_DEFAULT_EMBED_MODEL} in "
+        f"{backoff * (2**0):.2f} seconds"
     )
+    assert any(retry_msg in msg for msg in warning_messages)
 
 
 @pytest.mark.asyncio
@@ -1026,11 +1032,12 @@ async def test_client_embed_all_retries_fail(
 
     content = "Failure embed test"
     task = "RETRIEVAL_QUERY"
-    # The final exception should be wrapped by the client's generic message, mentioning the default model
-    with pytest.raises(
-        Exception,
-        match=f"API call to embedding model '{MOCK_DEFAULT_EMBED_MODEL}' failed after retries or during processing.",
-    ) as exc_info:
+    # Exception wrapped by client's message, mentioning default model
+    match_str = (
+        f"API call to embedding model '{MOCK_DEFAULT_EMBED_MODEL}' failed "
+        f"after retries or during processing."
+    )
+    with pytest.raises(Exception, match=match_str) as exc_info:
         await client.embed_content(content, task)
 
     # Check that the original error is the cause
@@ -1057,10 +1064,11 @@ async def test_client_embed_invalid_response_format(
     # Mock response missing 'embedding' or 'embeddings' keys
     mock_embed_func.return_value = {"wrong_key": [0.1]}
 
-    with pytest.raises(
-        ValueError,
-        match=f"API call for {MOCK_DEFAULT_EMBED_MODEL} succeeded but the response dictionary is missing the expected 'embedding' or 'embeddings' key",
-    ):
+    match_str = (
+        f"API call for {MOCK_DEFAULT_EMBED_MODEL} succeeded but the response "
+        f"dictionary is missing the expected 'embedding' or 'embeddings' key"
+    )
+    with pytest.raises(ValueError, match=match_str):
         await client.embed_content("Test", "RETRIEVAL_QUERY")
 
     mock_embed_func.assert_called_once()
@@ -1120,11 +1128,11 @@ async def test_client_embed_missing_usage_metadata(
         for call_args, call_kwargs in mock_warnings.call_args_list
         if call_args
     ]
-    assert any(
-        f"Usage metadata not found in response for embedding model '{MOCK_DEFAULT_EMBED_MODEL}'"
-        in msg
-        for msg in warning_messages
+    warn_str = (
+        f"Usage metadata not found in response for embedding model "
+        f"'{MOCK_DEFAULT_EMBED_MODEL}'"
     )
+    assert any(warn_str in msg for msg in warning_messages)
 
     # Verify cost tracker was NOT called since metadata was missing
     mock_record_usage.assert_not_called()

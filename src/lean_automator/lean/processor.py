@@ -86,7 +86,9 @@ LEAN_STATEMENT_MAX_ATTEMPTS = lean_config.get(
 # Validate the loaded/default value
 if not isinstance(LEAN_STATEMENT_MAX_ATTEMPTS, int) or LEAN_STATEMENT_MAX_ATTEMPTS < 1:
     logger.warning(
-        f"Invalid value '{LEAN_STATEMENT_MAX_ATTEMPTS}' for lean_processing.statement_max_attempts (must be int >= 1). Using default {DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS}."
+        f"Invalid value '{LEAN_STATEMENT_MAX_ATTEMPTS}' for "
+        f"lean_processing.statement_max_attempts (must be int >= 1). "
+        f"Using default {DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS}."
     )
     LEAN_STATEMENT_MAX_ATTEMPTS = DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS
 
@@ -96,7 +98,9 @@ LEAN_PROOF_MAX_ATTEMPTS = lean_config.get(
 # Validate the loaded/default value
 if not isinstance(LEAN_PROOF_MAX_ATTEMPTS, int) or LEAN_PROOF_MAX_ATTEMPTS < 1:
     logger.warning(
-        f"Invalid value '{LEAN_PROOF_MAX_ATTEMPTS}' for lean_processing.proof_max_attempts (must be int >= 1). Using default {DEFAULT_LEAN_PROOF_MAX_ATTEMPTS}."
+        f"Invalid value '{LEAN_PROOF_MAX_ATTEMPTS}' for "
+        f"lean_processing.proof_max_attempts (must be int >= 1). "
+        f"Using default {DEFAULT_LEAN_PROOF_MAX_ATTEMPTS}."
     )
     LEAN_PROOF_MAX_ATTEMPTS = DEFAULT_LEAN_PROOF_MAX_ATTEMPTS
 
@@ -105,11 +109,16 @@ logger.info(f"Using LEAN_PROOF_MAX_ATTEMPTS = {LEAN_PROOF_MAX_ATTEMPTS}")
 
 
 # --- Prompt Templates ---
-# Prompts remain the same - they already instructed the LLM NOT to write dependency imports.
+# Prompts remain the same - they already instructed the LLM NOT to write
+# dependency imports.
 LEAN_STATEMENT_GENERATOR_PROMPT = """
-You are an expert Lean 4 programmer translating mathematical statements into formal Lean code. **You are working in a restricted environment with ONLY the Lean 4 prelude and explicitly provided dependencies.**
+You are an expert Lean 4 programmer translating mathematical statements into
+formal Lean code. **You are working in a restricted environment with ONLY the
+Lean 4 prelude and explicitly provided dependencies.**
 
-**Goal:** Generate the Lean 4 statement signature (including necessary standard imports if absolutely needed, usually none) for the item named `{unique_name}` ({item_type_name}), based on its LaTeX statement.
+**Goal:** Generate the Lean 4 statement signature (including necessary standard
+imports if absolutely needed, usually none) for the item named `{unique_name}`
+({item_type_name}), based on its LaTeX statement.
 
 **LaTeX Statement:**
 --- BEGIN LATEX STATEMENT ---
@@ -123,11 +132,24 @@ You are an expert Lean 4 programmer translating mathematical statements into for
 {statement_error_feedback}
 
 **Instructions:**
-1.  Translate the LaTeX Statement into a formal Lean 4 theorem/definition signature (e.g., `theorem MyTheorem (n : Nat) : ...`). **IMPORTANT: Choose a Lean formulation that uses ONLY features available in the standard Lean 4 prelude (like basic types `Nat`, `List`, `Prop`, `Type`, logical connectives `∀`, `∃`, `∧`, `∨`, `¬`, basic arithmetic `+`, `*`, `>`, `=`, induction principles) and the provided dependencies.** For example, expressing 'infinitely many primes' as `∀ n, ∃ p > n, Nat.IsPrime p` is preferred over using `Set.Infinite` which requires extra libraries.
-2.  Include necessary minimal standard imports ONLY if required beyond the prelude (e.g., often no imports are needed). **DO NOT generate imports for the dependencies listed above; they will be handled automatically.**
-3.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless explicitly provided in the dependencies.** Code relying on concepts like `Set`, `Finset`, `Data.`, `Mathlib.` etc., is INCORRECT for this task.
+1.  Translate the LaTeX Statement into a formal Lean 4 theorem/definition
+    signature (e.g., `theorem MyTheorem (n : Nat) : ...`). **IMPORTANT: Choose
+    a Lean formulation that uses ONLY features available in the standard Lean 4
+    prelude (like basic types `Nat`, `List`, `Prop`, `Type`, logical connectives
+    `∀`, `∃`, `∧`, `∨`, `¬`, basic arithmetic `+`, `*`, `>`, `=`, induction
+    principles) and the provided dependencies.** For example, expressing
+    'infinitely many primes' as `∀ n, ∃ p > n, Nat.IsPrime p` is preferred over
+    using `Set.Infinite` which requires extra libraries.
+2.  Include necessary minimal standard imports ONLY if required beyond the
+    prelude (e.g., often no imports are needed). **DO NOT generate imports for
+    the dependencies listed above; they will be handled automatically.**
+3.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless
+    explicitly provided in the dependencies.** Code relying on concepts like
+    `Set`, `Finset`, `Data.`, `Mathlib.` etc., is INCORRECT for this task.
 4.  Append ` := sorry` to the end of the statement signature.
-5.  Output **only** the Lean code containing any necessary standard imports and the complete signature ending in `sorry`, marked between `--- BEGIN LEAN HEADER ---` and `--- END LEAN HEADER ---`. Here is an example output:
+5.  Output **only** the Lean code containing any necessary standard imports and
+    the complete signature ending in `sorry`, marked between `--- BEGIN LEAN HEADER ---`
+    and `--- END LEAN HEADER ---`. Here is an example output:
 
 --- BEGIN LEAN HEADER ---
 theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := sorry
@@ -135,7 +157,9 @@ theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := sorry
 """
 
 LEAN_PROOF_GENERATOR_PROMPT = """
-You are an expert Lean 4 programmer completing a formal proof. **You are working in a restricted environment with ONLY the Lean 4 prelude and explicitly provided dependencies.**
+You are an expert Lean 4 programmer completing a formal proof. **You are
+working in a restricted environment with ONLY the Lean 4 prelude and explicitly
+provided dependencies.**
 
 **Goal:** Complete the Lean proof below by replacing `sorry`.
 
@@ -145,32 +169,52 @@ You are an expert Lean 4 programmer completing a formal proof. **You are working
 --- END LEAN HEADER ---
 
 **Informal LaTeX Proof (Use as Guidance):**
-(This informal proof might contain errors, but use it as a guide for the formal Lean proof structure and steps.)
+(This informal proof might contain errors, but use it as a guide for the formal
+Lean proof structure and steps.)
 --- BEGIN LATEX PROOF ---
 {latex_proof}
 --- END LATEX PROOF ---
 
 **Available Proven Dependencies (Lean Code):**
-(You MUST use these definitions and theorems. **Assume they are correctly imported automatically.**)
+(You MUST use these definitions and theorems. **Assume they are correctly
+imported automatically.**)
 {dependency_context_for_proof}
 
 **Previous Attempt Error (If Applicable):**
-(The previous attempt to compile the generated Lean code failed with the following error. Please fix the proof tactics.)
+(The previous attempt to compile the generated Lean code failed with the
+following error. Please fix the proof tactics.)
 --- BEGIN LEAN ERROR ---
 {lean_error_log}
 --- END LEAN ERROR ---
 
 **Instructions:**
-1.  Write the Lean 4 proof tactics to replace the `sorry` in the provided Lean Statement Shell.
+1.  Write the Lean 4 proof tactics to replace the `sorry` in the provided Lean
+    Statement Shell.
 2.  Ensure the proof strictly follows Lean 4 syntax and logic.
-3.  You have access ONLY to Lean 4 prelude features (basic types, logic, induction, basic tactics like `rw`, `simp`, `intro`, `apply`, `exact`, `have`, `let`, `by_contra`, `cases`, `induction`, `rfl`) and the 'Available Proven Dependencies' provided above. **Use `simp` frequently to simplify goals and unfold definitions (like the definition of `List.append` when applied to `::`).** Use `rw [axiom_name]` or `rw [← axiom_name]` for intermediate steps. **Do NOT try to `rw` using function names (like `List.append`) or constructor names (like `List.cons`).**
-4.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless explicitly provided in the dependencies.** Code using `Set`, `Finset`, advanced tactics (like `linarith`, `ring`), or library functions beyond the prelude or provided dependencies is INCORRECT.
-5.  **CRITICAL: DO NOT generate any `import` statements. Assume necessary dependency imports are already present.**
-6.  Use the Informal LaTeX Proof as a *guide* but prioritize formal correctness using ONLY the allowed features.
-7.  Before significant tactics (`rw`, `simp` variants, `apply`, `induction` steps, `cases`, `have`, `let`), add **two** comment lines in the following format:
+3.  You have access ONLY to Lean 4 prelude features (basic types, logic,
+    induction, basic tactics like `rw`, `simp`, `intro`, `apply`, `exact`,
+    `have`, `let`, `by_contra`, `cases`, `induction`, `rfl`) and the 'Available
+    Proven Dependencies' provided above. **Use `simp` frequently to simplify
+    goals and unfold definitions (like the definition of `List.append` when
+    applied to `::`).** Use `rw [axiom_name]` or `rw [← axiom_name]` for
+    intermediate steps. **Do NOT try to `rw` using function names (like
+    `List.append`) or constructor names (like `List.cons`).**
+4.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless
+    explicitly provided in the dependencies.** Code using `Set`, `Finset`,
+    advanced tactics (like `linarith`, `ring`), or library functions beyond the
+    prelude or provided dependencies is INCORRECT.
+5.  **CRITICAL: DO NOT generate any `import` statements. Assume necessary
+    dependency imports are already present.**
+6.  Use the Informal LaTeX Proof as a *guide* but prioritize formal correctness
+    using ONLY the allowed features.
+7.  Before significant tactics (`rw`, `simp` variants, `apply`, `induction`
+    steps, `cases`, `have`, `let`), add **two** comment lines in the following
+    format:
     * `-- Goal: [Brief summary or key part of the current proof goal]`
-    * `-- Action: [Explain the planned tactic, which rule/hypothesis (like 'ih') is used, and why (note rw ← if needed)]`
-* Do **not** add these comments for simple tactics like `rfl`, `exact ...`, `done`, or simple structural syntax.
+    * `-- Action: [Explain the planned tactic, which rule/hypothesis (like 'ih')
+       is used, and why (note rw ← if needed)]`
+* Do **not** add these comments for simple tactics like `rfl`, `exact ...`,
+  `done`, or simple structural syntax.
 * **Example:**
     ```lean
     -- Goal: List.reverse l' = List.append (List.reverse l') []
@@ -189,12 +233,29 @@ You are an expert Lean 4 programmer completing a formal proof. **You are working
     -- Action: Apply the induction hypothesis 'ih' to the LHS
     rw [ih]
     ```
-8.  **TACTIC NOTE (Reflexivity):** After applying tactics like `rw [...]` or `simp [...]`, check if the resulting goal is of the form `X = X`. If it is, the goal is solved by reflexivity. **DO NOT add `rfl` in this case.** Simply proceed or end the branch. Avoid redundant tactics.
-9.  **TACTIC NOTE (Finishing with Axioms/Hypotheses):** If the goal is an equality `LHS = RHS` and the *final* step is to apply a single axiom or hypothesis `h : LHS = RHS` (or `h : RHS = LHS`), **prefer using `exact h` (or `exact h.symm`)** instead of using `rw [h]` or `rw [← h]` as the very last tactic for that goal branch. Use `rw` for intermediate steps.
-10. **Error Handling:** If fixing an error based on 'Previous Attempt Error', carefully analyze the error message and modify the proof tactics accordingly. **Do NOT change the theorem signature provided.**
-    * **Specifically for "no goals to be solved" errors:** If the error log contains `error: ...:N:M: no goals to be solved` pointing to a line `N` containing a tactic (like `rfl`), it almost always means the goal was already solved implicitly by the tactic on the line *before* `N`. You should **remove the superfluous tactic on line `N`** in your corrected proof attempt.
+8.  **TACTIC NOTE (Reflexivity):** After applying tactics like `rw [...]` or
+    `simp [...]`, check if the resulting goal is of the form `X = X`. If it is,
+    the goal is solved by reflexivity. **DO NOT add `rfl` in this case.** Simply
+    proceed or end the branch. Avoid redundant tactics.
+9.  **TACTIC NOTE (Finishing with Axioms/Hypotheses):** If the goal is an
+    equality `LHS = RHS` and the *final* step is to apply a single axiom or
+    hypothesis `h : LHS = RHS` (or `h : RHS = LHS`), **prefer using `exact h`
+    (or `exact h.symm`)** instead of using `rw [h]` or `rw [← h]` as the very
+    last tactic for that goal branch. Use `rw` for intermediate steps.
+10. **Error Handling:** If fixing an error based on 'Previous Attempt Error',
+    carefully analyze the error message and modify the proof tactics
+    accordingly. **Do NOT change the theorem signature provided.**
+    * **Specifically for "no goals to be solved" errors:** If the error log
+      contains `error: ...:N:M: no goals to be solved` pointing to a line `N`
+      containing a tactic (like `rfl`), it almost always means the goal was
+      already solved implicitly by the tactic on the line *before* `N`. You
+      should **remove the superfluous tactic on line `N`** in your corrected
+      proof attempt.
 11. Ensure the proof block is correctly terminated (e.g., no stray `end`).
-12. Output **only** the complete Lean code block, including the *unchanged* statement signature, and the full proof replacing sorry (with comments), marked between `--- BEGIN LEAN CODE ---` and `--- END LEAN CODE ---`. Here is an example output:
+12. Output **only** the complete Lean code block, including the *unchanged*
+    statement signature, and the full proof replacing sorry (with comments),
+    marked between `--- BEGIN LEAN CODE ---` and `--- END LEAN CODE ---`. Here is
+    an example output:
 
 --- BEGIN LEAN CODE ---
 theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := by
@@ -210,7 +271,9 @@ theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := by
 
 
 def _extract_lean_header(text: Optional[str]) -> Optional[str]:
-    """Extracts Lean header (signature ending in ':= sorry') from LLM output. (Internal Helper)
+    """Extracts Lean header (signature ending in ':= sorry') from LLM output.
+
+    (Internal Helper)
 
     Tries to parse the header using custom markers (`--- BEGIN/END LEAN HEADER ---`)
     first, then falls back to parsing a strict markdown code block (` ```lean ... ``` `)
@@ -240,7 +303,8 @@ def _extract_lean_header(text: Optional[str]) -> Optional[str]:
         logger.debug("Extracted header using custom markers.")
     else:
         logger.warning(
-            "Could not find '--- BEGIN/END LEAN HEADER ---' markers. Trying strict markdown block..."
+            "Could not find '--- BEGIN/END LEAN HEADER ---' markers. "
+            "Trying strict markdown block..."
         )
         # Fallback: Try strict markdown block encompassing the whole response
         markdown_regex_strict = r"^```lean\s*(.*?)\s*```$"
@@ -250,7 +314,8 @@ def _extract_lean_header(text: Optional[str]) -> Optional[str]:
             logger.debug("Extracted header using strict markdown block.")
         else:
             logger.warning(
-                "Could not find strict markdown block ('```lean...```') encompassing the whole response."
+                "Could not find strict markdown block ('```lean...```') "
+                "encompassing the whole response."
             )
 
     # Post-process: Ensure it ends with ':= sorry'
@@ -273,7 +338,8 @@ def _extract_lean_header(text: Optional[str]) -> Optional[str]:
             else:  # Append directly if no obvious near miss
                 header = header_no_comments + " := sorry"
         else:
-            # If it already ends correctly (after stripping comments), use the original (potentially with comments)
+            # If it already ends correctly (after stripping comments),
+            # use the original (potentially with comments)
             header = stripped_header
 
         logger.debug(f"Final extracted/corrected header: '{header}'")
@@ -281,7 +347,8 @@ def _extract_lean_header(text: Optional[str]) -> Optional[str]:
     else:
         # Log error if extraction failed completely
         logger.error(
-            f"Failed to extract Lean header using any method. Raw text received: {repr(text)[:500]}..."
+            "Failed to extract Lean header using any method. Raw text "
+            f"received: {repr(text)[:500]}..."
         )
         return None
 
@@ -317,7 +384,8 @@ def _extract_lean_code(text: Optional[str]) -> Optional[str]:
         return code
     else:
         logger.warning(
-            "Could not find '--- BEGIN/END LEAN CODE ---' markers. Trying strict markdown block..."
+            "Could not find '--- BEGIN/END LEAN CODE ---' markers. "
+            "Trying strict markdown block..."
         )
         # Fallback: Try strict markdown block encompassing the whole response
         markdown_regex_strict = r"^```lean\s*(.*?)\s*```$"
@@ -328,18 +396,20 @@ def _extract_lean_code(text: Optional[str]) -> Optional[str]:
             return code
         else:
             logger.warning(
-                "Could not find strict markdown block ('```lean...```') encompassing the whole response."
+                "Could not find strict markdown block ('```lean...```') "
+                "encompassing the whole response."
             )
 
     # Log error if extraction failed completely
     logger.error(
-        f"Failed to extract Lean code using any method. Raw text received: {repr(text)[:500]}..."
+        "Failed to extract Lean code using any method. Raw text received: "
+        f"{repr(text)[:500]}..."
     )
     return None
 
 
 def _build_lean_dependency_context_for_statement(dependencies: List[KBItem]) -> str:
-    """Builds a simple context string listing dependency names and types. (Internal Helper)
+    """Builds simple context string: dependency names and types. (Internal Helper)
 
     Used for the statement generation prompt to give the LLM awareness of available
     item names and types without including their full code.
@@ -363,7 +433,7 @@ def _build_lean_dependency_context_for_statement(dependencies: List[KBItem]) -> 
 
 
 def _build_lean_dependency_context_for_proof(dependencies: List[KBItem]) -> str:
-    """Builds context string with full Lean code of PROVEN dependencies. (Internal Helper)
+    """Builds context string with full Lean code of PROVEN deps. (Internal Helper)
 
     Filters the provided list of dependencies to include only those that are
     considered "proven" (status PROVEN, AXIOM_ACCEPTED, DEFINITION_ADDED) and
@@ -407,7 +477,10 @@ def _build_lean_dependency_context_for_proof(dependencies: List[KBItem]) -> str:
             dependency_context += f"-- END {dep_name} LEAN --\n\n"
     else:
         # Provide a clear message if no suitable dependencies were found
-        dependency_context = "-- (No specific proven dependencies provided from KB. Rely on Lean prelude.) --\n"
+        dependency_context = (
+            "-- (No specific proven dependencies provided from KB. "
+            "Rely on Lean prelude.) --\n"
+        )
 
     return dependency_context.strip()
 
@@ -419,7 +492,9 @@ async def _call_lean_statement_generator(
     statement_error_feedback: Optional[str],
     client: GeminiClient,
 ) -> Optional[str]:
-    """Calls the LLM to generate the Lean statement signature (`... := sorry`). (Internal Helper)
+    """Calls the LLM to generate Lean statement signature (`... := sorry`).
+
+    (Internal Helper)
 
     Formats the prompt using `LEAN_STATEMENT_GENERATOR_PROMPT`, including item
     details (LaTeX statement), dependency context (names/types), and optional
@@ -441,7 +516,8 @@ async def _call_lean_statement_generator(
     """
     if not client:
         raise ValueError("GeminiClient not available for Lean statement generation.")
-    # Safely get attributes from item, providing defaults or raising errors if critical info missing
+    # Safely get attributes from item, providing defaults or raising errors
+    # if critical info missing
     item_unique_name = getattr(item, "unique_name", "UNKNOWN_ITEM")
     item_type = getattr(item, "item_type", None)
     item_type_name = (
@@ -451,7 +527,8 @@ async def _call_lean_statement_generator(
 
     if not item_latex_statement:
         logger.error(
-            f"Cannot generate Lean statement for {item_unique_name}: Missing latex_statement."
+            f"Cannot generate Lean statement for {item_unique_name}: "
+            f"Missing latex_statement."
         )
         return None  # Cannot proceed without LaTeX statement
 
@@ -463,8 +540,12 @@ async def _call_lean_statement_generator(
         # Conditionally format the prompt based on whether feedback is provided
         if not statement_error_feedback:
             # Remove the optional feedback section if not needed
+            feedback_pattern = (
+                r"\n\*\*Refinement Feedback \(If Applicable\):\*\*.*?\n"
+                r"(\*\*Instructions:\*\*)"
+            )
             base_prompt = re.sub(
-                r"\n\*\*Refinement Feedback \(If Applicable\):\*\*.*?\n(\*\*Instructions:\*\*)",
+                feedback_pattern,
                 r"\n\1",
                 base_prompt,
                 flags=re.DOTALL | re.MULTILINE,
@@ -491,7 +572,8 @@ async def _call_lean_statement_generator(
     except Exception as e:
         # Catch other potential formatting issues
         logger.error(
-            f"Unexpected error formatting Lean statement prompt for {item_unique_name}: {e}"
+            f"Unexpected error formatting Lean statement prompt for "
+            f"{item_unique_name}: {e}"
         )
         return None
 
@@ -516,7 +598,9 @@ async def _call_lean_proof_generator(
     lean_error_log: Optional[str],
     client: GeminiClient,
 ) -> Optional[str]:
-    """Calls the LLM to generate Lean proof tactics for a given statement shell. (Internal Helper)
+    """Calls the LLM to generate Lean proof tactics for a statement shell.
+
+    (Internal Helper)
 
     Formats the prompt using `LEAN_PROOF_GENERATOR_PROMPT`, providing the
     statement shell (`... := sorry`), informal LaTeX proof (as guidance),
@@ -534,9 +618,10 @@ async def _call_lean_proof_generator(
         client (GeminiClient): The initialized LLM client instance.
 
     Returns:
-        Optional[str]: The raw text response from the LLM, expected to contain the
-        complete Lean code (statement + proof tactics), or None if the client is
-        unavailable, prompt formatting fails, the API call errors, or input validation fails.
+        Optional[str]: The raw text response from the LLM, expected to contain
+        the complete Lean code (statement + proof tactics), or None if the client
+        is unavailable, prompt formatting fails, the API call errors, or input
+        validation fails.
 
     Raises:
         ValueError: If `client` is None or `lean_statement_shell` is invalid.
@@ -545,7 +630,11 @@ async def _call_lean_proof_generator(
         raise ValueError("GeminiClient not available for Lean proof generation.")
     # Validate the input shell
     if not lean_statement_shell or ":= sorry" not in lean_statement_shell:
-        msg = f"Internal Error: _call_lean_proof_generator for {unique_name} called without a valid shell ending in ':= sorry'. Shell: {lean_statement_shell}"
+        msg = (
+            f"Internal Error: _call_lean_proof_generator for {unique_name} "
+            f"called without a valid shell ending in ':= sorry'. "
+            f"Shell: {lean_statement_shell}"
+        )
         logger.error(msg)
         # Returning None instead of raising here as it's likely an internal logic error
         return None
@@ -558,8 +647,12 @@ async def _call_lean_proof_generator(
         # Conditionally format the prompt based on whether an error log is provided
         if not lean_error_log:
             # Remove the optional error log section if not needed
+            error_log_pattern = (
+                r"\n\*\*Previous Attempt Error \(If Applicable\):\*\*.*?\n"
+                r"(\*\*Instructions:\*\*)"
+            )
             base_prompt = re.sub(
-                r"\n\*\*Previous Attempt Error \(If Applicable\):\*\*.*?\n(\*\*Instructions:\*\*)",
+                error_log_pattern,
                 r"\n\1",
                 base_prompt,
                 flags=re.DOTALL | re.MULTILINE,
@@ -631,8 +724,9 @@ async def generate_and_verify_lean(
 
         c. Parses the full Lean code from the LLM response.
 
-        d. Calls `lean_interaction.check_and_compile_item` to verify the code
-           in a temporary environment and update the persistent shared library on success.
+        d. Calls `lean_interaction.check_and_compile_item` to verify the code in a
+           temporary environment and update the persistent shared library on
+           success.
 
         e. If verification succeeds, updates status to `PROVEN` and returns True.
 
@@ -677,7 +771,8 @@ async def generate_and_verify_lean(
             ]
         ):
             logger.critical(
-                "Required modules (kb_storage, lean_interaction, lean_proof_repair) not fully loaded. Cannot process Lean."
+                "Required modules (kb_storage, lean_interaction, "
+                "lean_proof_repair) not fully loaded. Cannot process Lean."
             )
             return False
     else:
@@ -688,12 +783,14 @@ async def generate_and_verify_lean(
         return False
     if not hasattr(lean_interaction, "check_and_compile_item"):
         logger.critical(
-            f"lean_interaction.check_and_compile_item missing. Cannot process Lean for {unique_name}."
+            f"lean_interaction.check_and_compile_item missing. "
+            f"Cannot process Lean for {unique_name}."
         )
         return False
     if not hasattr(lean_proof_repair, "attempt_proof_repair"):
         logger.critical(
-            f"lean_proof_repair.attempt_proof_repair missing. Cannot process Lean for {unique_name}."
+            f"lean_proof_repair.attempt_proof_repair missing. "
+            f"Cannot process Lean for {unique_name}."
         )
         return False
 
@@ -710,7 +807,7 @@ async def generate_and_verify_lean(
     item_lean_code = getattr(item, "lean_code", None)
     item_latex_statement = getattr(item, "latex_statement", None)
     item_plan_dependencies = getattr(item, "plan_dependencies", [])
-    item_latex_proof = getattr(item, "latex_proof", None)  # For proof gen context
+    # item_latex_proof = getattr(item, "latex_proof", None) # F841: Variable unused
 
     if item_status == ItemStatus.PROVEN:
         logger.info(f"Lean Proc: Item {unique_name} is already PROVEN. Skipping.")
@@ -723,15 +820,19 @@ async def generate_and_verify_lean(
         ItemStatus.LEAN_VALIDATION_FAILED,
     }
     if item_status not in trigger_statuses:
+        trigger_names = {s.name for s in trigger_statuses}
+        status_name = item_status.name if item_status else "None"
         logger.warning(
-            f"Lean Proc: Item {unique_name} not in a trigger status ({ {s.name for s in trigger_statuses} }). Current: {item_status.name if item_status else 'None'}. Skipping."
+            f"Lean Proc: Item {unique_name} not in a trigger status "
+            f"({trigger_names}). Current: {status_name}. Skipping."
         )
         return False
 
     # Check prerequisite: LaTeX statement must exist
     if not item_latex_statement:
         logger.error(
-            f"Lean Proc: Cannot process {unique_name}, missing required latex_statement."
+            f"Lean Proc: Cannot process {unique_name}, missing required "
+            f"latex_statement."
         )
         if hasattr(item, "update_status"):
             item.update_status(
@@ -747,14 +848,17 @@ async def generate_and_verify_lean(
 
     # Handle non-provable types early IF they already have Lean code
     if not proof_required and item_lean_code:
+        item_type_name = item_type.name if item_type else "N/A"
         logger.info(
-            f"Lean Proc: No proof required for {unique_name} ({item_type.name if item_type else 'N/A'}) and Lean code exists. Marking PROVEN."
+            f"Lean Proc: No proof required for {unique_name} ({item_type_name}) "
+            f"and Lean code exists. Marking PROVEN."
         )
         if hasattr(item, "update_status"):
             item.update_status(ItemStatus.PROVEN)
             await save_kb_item(item, client=None, db_path=effective_db_path)
         return True
-    # Note: If proof not required but code missing, we fall through to statement generation.
+    # Note: If proof not required but code missing, we fall through to statement
+    # generation.
 
     # --- Check Dependencies ---
     dependency_items: List[KBItem] = []
@@ -776,12 +880,17 @@ async def generate_and_verify_lean(
         if not dep_item or dep_status not in valid_dep_statuses or not dep_code_exists:
             dep_status_name = dep_status.name if dep_status else "MISSING_ITEM"
             logger.error(
-                f"Dependency '{dep_name}' for '{unique_name}' not ready (Status: {dep_status_name}, Code Exists: {dep_code_exists}). Cannot proceed."
+                f"Dependency '{dep_name}' for '{unique_name}' not ready "
+                f"(Status: {dep_status_name}, Code Exists: {dep_code_exists}). "
+                f"Cannot proceed."
             )
             if hasattr(item, "update_status"):
                 item.update_status(
                     ItemStatus.ERROR,
-                    f"Prerequisite dependency '{dep_name}' is not PROVEN or lacks code.",
+                    (
+                        f"Prerequisite dependency '{dep_name}' is not PROVEN "
+                        f"or lacks code."
+                    ),
                 )
                 await save_kb_item(item, client=None, db_path=effective_db_path)
             all_deps_ready = False
@@ -792,7 +901,8 @@ async def generate_and_verify_lean(
         return False  # Exit if any dependency is not ready
 
     logger.debug(
-        f"All {len(dependency_items)} dependencies for {unique_name} confirmed available and proven."
+        f"All {len(dependency_items)} dependencies for {unique_name} "
+        f"confirmed available and proven."
     )
 
     # --- Statement Generation Phase (if needed) ---
@@ -808,7 +918,8 @@ async def generate_and_verify_lean(
         statement_accepted = False
         for attempt in range(LEAN_STATEMENT_MAX_ATTEMPTS):
             logger.info(
-                f"Lean Statement Generation Attempt {attempt + 1}/{LEAN_STATEMENT_MAX_ATTEMPTS} for {unique_name}"
+                f"Lean Statement Generation Attempt {attempt + 1}/"
+                f"{LEAN_STATEMENT_MAX_ATTEMPTS} for {unique_name}"
             )
             # Update status to show progress
             if hasattr(item, "update_status"):
@@ -835,8 +946,13 @@ async def generate_and_verify_lean(
 
             if not parsed_header:
                 logger.warning(f"Failed to parse Lean header on attempt {attempt + 1}.")
-                statement_error_feedback = f"LLM output did not contain a valid Lean header (attempt {attempt + 1}). Raw response: {repr(raw_response[:500])}"
-                # Save raw response and error feedback for potential debugging or next attempt
+                statement_error_feedback = (
+                    f"LLM output did not contain a valid Lean header "
+                    f"(attempt {attempt + 1}). Raw response: "
+                    f"{repr(raw_response[:500])}"
+                )
+                # Save raw response and error feedback for potential debugging
+                # or next attempt
                 if hasattr(item, "raw_ai_response"):
                     item.raw_ai_response = raw_response
                 if hasattr(item, "lean_error_log"):
@@ -850,7 +966,8 @@ async def generate_and_verify_lean(
             else:
                 # Successfully parsed header
                 logger.info(
-                    f"Lean statement shell generated successfully for {unique_name} on attempt {attempt + 1}."
+                    f"Lean statement shell generated successfully for {unique_name} "
+                    f"on attempt {attempt + 1}."
                 )
                 original_lean_statement_shell = parsed_header
                 # Update item with the generated shell
@@ -871,12 +988,14 @@ async def generate_and_verify_lean(
         # Check if statement generation ultimately failed
         if not statement_accepted:
             logger.error(
-                f"Failed to generate valid Lean statement shell for {unique_name} after {LEAN_STATEMENT_MAX_ATTEMPTS} attempts."
+                f"Failed to generate valid Lean statement shell for {unique_name} "
+                f"after {LEAN_STATEMENT_MAX_ATTEMPTS} attempts."
             )
             if hasattr(item, "update_status"):  # Ensure item object still exists
                 item.update_status(
                     ItemStatus.ERROR,
-                    f"Failed Lean statement generation after {LEAN_STATEMENT_MAX_ATTEMPTS} attempts.",
+                    f"Failed Lean statement generation after "
+                    f"{LEAN_STATEMENT_MAX_ATTEMPTS} attempts.",
                 )
                 # Keep last error feedback in lean_error_log
                 await save_kb_item(item, client=None, db_path=effective_db_path)
@@ -884,7 +1003,8 @@ async def generate_and_verify_lean(
     else:
         # Use existing Lean code as the statement shell
         logger.info(
-            f"Skipping Lean statement generation for {unique_name}, using existing lean_code."
+            f"Skipping Lean statement generation for {unique_name}, "
+            f"using existing lean_code."
         )
         original_lean_statement_shell = item_lean_code
         # Validate existing shell format
@@ -893,7 +1013,8 @@ async def generate_and_verify_lean(
             or ":= sorry" not in original_lean_statement_shell
         ):
             logger.error(
-                f"Existing lean_code for {unique_name} is invalid (missing ':= sorry'). Cannot proceed."
+                f"Existing lean_code for {unique_name} is invalid "
+                f"(missing ':= sorry'). Cannot proceed."
             )
             if hasattr(item, "update_status"):
                 item.update_status(
@@ -906,7 +1027,8 @@ async def generate_and_verify_lean(
     # --- Handle non-provable items after potential statement generation ---
     if not proof_required:
         logger.info(
-            f"Lean Proc: Statement generated/present for non-provable {unique_name}. Marking PROVEN."
+            f"Lean Proc: Statement generated/present for non-provable "
+            f"{unique_name}. Marking PROVEN."
         )
         item_final = get_kb_item_by_name(
             unique_name, effective_db_path
@@ -933,7 +1055,8 @@ async def generate_and_verify_lean(
     item_before_proof_loop = get_kb_item_by_name(unique_name, effective_db_path)
     if not item_before_proof_loop or not original_lean_statement_shell:
         logger.error(
-            f"Cannot proceed to proof generation: Item {unique_name} missing or statement shell invalid before proof loop."
+            f"Cannot proceed to proof generation: Item {unique_name} missing "
+            f"or statement shell invalid before proof loop."
         )
         return False
 
@@ -946,8 +1069,14 @@ async def generate_and_verify_lean(
             hasattr(item_before_proof_loop, "lean_error_log")
             and getattr(item_before_proof_loop, "lean_error_log", None) is not None
         ):
+            status_name = (
+                item_before_proof_loop.status.name
+                if item_before_proof_loop.status
+                else "None"
+            )
             logger.debug(
-                f"Clearing previous lean_error_log for {unique_name} (Status: {item_before_proof_loop.status.name if item_before_proof_loop.status else 'None'})."
+                f"Clearing previous lean_error_log for {unique_name} "
+                f"(Status: {status_name})."
             )
             item_before_proof_loop.lean_error_log = None
             await save_kb_item(
@@ -957,9 +1086,11 @@ async def generate_and_verify_lean(
     # --- Proof Attempt Loop ---
     for attempt in range(LEAN_PROOF_MAX_ATTEMPTS):
         logger.info(
-            f"Lean Proof Generation Attempt {attempt + 1}/{LEAN_PROOF_MAX_ATTEMPTS} for {unique_name}"
+            f"Lean Proof Generation Attempt {attempt + 1}/"
+            f"{LEAN_PROOF_MAX_ATTEMPTS} for {unique_name}"
         )
-        # Fetch the latest item state, including any error log from previous verification attempt
+        # Fetch the latest item state, including any error log from previous
+        # verification attempt
         current_item_state = get_kb_item_by_name(unique_name, effective_db_path)
         if not current_item_state:
             logger.error(f"Item {unique_name} vanished mid-proof attempts!")
@@ -1020,9 +1151,13 @@ async def generate_and_verify_lean(
         generated_lean_code_from_llm = _extract_lean_code(raw_llm_response)
         if not generated_lean_code_from_llm:
             logger.warning(
-                f"Failed to parse Lean code from proof generator on attempt {attempt + 1}."
+                f"Failed to parse Lean code from proof generator on attempt "
+                f"{attempt + 1}."
             )
-            error_message = f"LLM output parsing failed on proof attempt {attempt + 1}. Raw: {repr(raw_llm_response[:500])}"
+            error_message = (
+                f"LLM output parsing failed on proof attempt {attempt + 1}. "
+                f"Raw: {repr(raw_llm_response[:500])}"
+            )
             # Save raw response and parsing error
             if hasattr(item_after_gen, "raw_ai_response"):
                 item_after_gen.raw_ai_response = raw_llm_response
@@ -1063,10 +1198,12 @@ async def generate_and_verify_lean(
         )  # Save before verification
 
         logger.info(
-            f"Calling lean_interaction.check_and_compile_item for {unique_name} (Proof Attempt {attempt + 1})"
+            f"Calling lean_interaction.check_and_compile_item for {unique_name} "
+            f"(Proof Attempt {attempt + 1})"
         )
         try:
-            # Call verification function (handles temp env, lake build, persistent update)
+            # Call verification function (handles temp env, lake build,
+            # persistent update)
             verified, message = await lean_interaction.check_and_compile_item(
                 unique_name=unique_name,
                 db_path=effective_db_path,
@@ -1076,7 +1213,8 @@ async def generate_and_verify_lean(
 
             if verified:
                 logger.info(
-                    f"Successfully verified Lean code for: {unique_name} on attempt {attempt + 1}. Message: {message}"
+                    f"Successfully verified Lean code for: {unique_name} on "
+                    f"attempt {attempt + 1}. Message: {message}"
                 )
                 # Status should now be PROVEN (set by check_and_compile_item)
                 lean_verification_success = True
@@ -1084,9 +1222,11 @@ async def generate_and_verify_lean(
             else:
                 # Verification failed
                 logger.warning(
-                    f"Verification failed for {unique_name} on proof attempt {attempt + 1}. Message: {message[:500]}..."
+                    f"Verification failed for {unique_name} on proof attempt "
+                    f"{attempt + 1}. Message: {message[:500]}..."
                 )
-                # Status should be LEAN_VALIDATION_FAILED (set by check_and_compile_item)
+                # Status should be LEAN_VALIDATION_FAILED
+                # (set by check_and_compile_item)
                 # Error log should also be saved by check_and_compile_item
 
                 # Fetch item again to see the error log saved by check_and_compile
@@ -1110,7 +1250,8 @@ async def generate_and_verify_lean(
                         and item_after_fail.lean_code
                     ):
                         logger.info(
-                            f"Attempting automated proof repair for {unique_name} based on error log."
+                            f"Attempting automated proof repair for {unique_name} "
+                            f"based on error log."
                         )
                         try:
                             fix_applied, _ = lean_proof_repair.attempt_proof_repair(
@@ -1118,24 +1259,32 @@ async def generate_and_verify_lean(
                             )
                             if fix_applied:
                                 logger.info(
-                                    f"Automated proof repair heuristic applied for {unique_name}. Note: Re-verification within this loop is not implemented."
+                                    f"Automated proof repair heuristic applied for "
+                                    f"{unique_name}. Note: Re-verification within "
+                                    f"this loop is not implemented."
                                 )
-                                # The next LLM attempt will receive the original error log,
-                                # not reflecting the automated repair attempt.
-                                # Could potentially save the repaired code back to DB here,
-                                # but adds complexity (might overwrite user changes, needs re-verify logic).
+                                # The next LLM attempt will receive the original
+                                # error log, not reflecting the automated repair
+                                # attempt.
+                                # Could potentially save the repaired code back
+                                # to DB here, but adds complexity (might
+                                # overwrite user changes, needs re-verify
+                                # logic).
                             else:
                                 logger.debug(
-                                    f"No automated fix applied by lean_proof_repair for {unique_name}."
+                                    f"No automated fix applied by lean_proof_repair "
+                                    f"for {unique_name}."
                                 )
                         except Exception as repair_err:
                             logger.error(
-                                f"Error during automated proof repair attempt for {unique_name}: {repair_err}"
+                                f"Error during automated proof repair attempt for "
+                                f"{unique_name}: {repair_err}"
                             )
                     # --- End Optional Proof Repair ---
                 else:
                     logger.warning(
-                        f"No specific error log captured in DB after failed verification attempt {attempt + 1}, message: {message}"
+                        f"No specific error log captured in DB after failed "
+                        f"verification attempt {attempt + 1}, message: {message}"
                     )
 
                 # Continue to the next LLM proof generation attempt loop iteration
@@ -1144,7 +1293,8 @@ async def generate_and_verify_lean(
         except Exception as verify_err:
             # Catch errors from check_and_compile_item itself
             logger.exception(
-                f"check_and_compile_item crashed unexpectedly for {unique_name} on proof attempt {attempt + 1}: {verify_err}"
+                f"check_and_compile_item crashed unexpectedly for {unique_name} on "
+                f"proof attempt {attempt + 1}: {verify_err}"
             )
             # Attempt to set item status to ERROR
             item_err_state = get_kb_item_by_name(unique_name, effective_db_path)
@@ -1165,7 +1315,8 @@ async def generate_and_verify_lean(
                 # Log error message if saved
                 if getattr(item_err_state, "lean_error_log", None):
                     logger.warning(
-                        f"--- Lean Error Log (Verification Crash - Attempt {attempt + 1}) ---"
+                        f"--- Lean Error Log (Verification Crash - "
+                        f"Attempt {attempt + 1}) ---"
                     )
                     logger.warning(f"\n{item_err_state.lean_error_log}\n")
                     logger.warning("--- End Lean Error Log ---")
@@ -1183,9 +1334,12 @@ async def generate_and_verify_lean(
         return True
     else:
         logger.error(
-            f"Failed to generate and verify Lean proof for {unique_name} after all attempts ({LEAN_PROOF_MAX_ATTEMPTS} attempts). Total time: {duration:.2f} seconds."
+            f"Failed to generate and verify Lean proof for {unique_name} after "
+            f"all attempts ({LEAN_PROOF_MAX_ATTEMPTS} attempts). "
+            f"Total time: {duration:.2f} seconds."
         )
-        # Final status should be LEAN_VALIDATION_FAILED or ERROR, already set within the loop.
+        # Final status should be LEAN_VALIDATION_FAILED or ERROR,
+        # already set within the loop.
         # Fetch final state just for logging consistency.
         final_item = get_kb_item_by_name(unique_name, effective_db_path)
         final_status_name = getattr(
@@ -1195,7 +1349,8 @@ async def generate_and_verify_lean(
         # Double-check if somehow marked Proven - indicates a logic error somewhere.
         if final_status_name == ItemStatus.PROVEN.name:
             logger.warning(
-                f"Item {unique_name} ended as PROVEN despite loop indicating failure. Assuming success due to final status."
+                f"Item {unique_name} ended as PROVEN despite loop indicating failure. "
+                f"Assuming success due to final status."
             )
             return True
         # Otherwise, the failure outcome is correct.
@@ -1224,8 +1379,9 @@ async def process_pending_lean_items(
         db_path (Optional[str]): Path to the database file. If None, uses
             `DEFAULT_DB_PATH`.
         limit (Optional[int]): Max number of items to process in this batch.
-        process_statuses (Optional[List[ItemStatus]]): List of statuses to query for
-            processing. Defaults to LATEX_ACCEPTED, PENDING_LEAN, LEAN_VALIDATION_FAILED.
+        process_statuses (Optional[List[ItemStatus]]): List of statuses to query
+            for processing. Defaults to LATEX_ACCEPTED, PENDING_LEAN,
+            LEAN_VALIDATION_FAILED.
         **kwargs: Additional keyword arguments (e.g., `lake_executable_path`,
             `timeout_seconds`) passed directly to `generate_and_verify_lean`.
     """
@@ -1268,8 +1424,10 @@ async def process_pending_lean_items(
     fail_count = 0
     items_to_process_names = []
 
+    status_names = [s.name for s in process_statuses_set]
     logger.info(
-        f"Starting Lean batch processing. Querying for items with statuses: {[s.name for s in process_statuses_set]}."
+        f"Starting Lean batch processing. Querying for items with statuses: "
+        f"{status_names}."
     )
     # --- Collect eligible items ---
     for status in process_statuses_set:
@@ -1292,10 +1450,12 @@ async def process_pending_lean_items(
                 needs_proof = item_type.requires_proof() if item_type else True
 
                 if not needs_proof and item_status == ItemStatus.LATEX_ACCEPTED:
-                    # If non-provable and already has code, mark PROVEN and skip adding to batch
+                    # If non-provable and already has code, mark PROVEN and skip
+                    # adding to batch
                     if item_lean_code:
                         logger.info(
-                            f"Found non-provable item {item_unique_name} with code. Marking PROVEN directly."
+                            f"Found non-provable item {item_unique_name} with code. "
+                            f"Marking PROVEN directly."
                         )
                         if hasattr(item, "update_status"):
                             item.update_status(ItemStatus.PROVEN)
@@ -1306,11 +1466,13 @@ async def process_pending_lean_items(
                     else:
                         # Needs statement generation, fall through to add
                         logger.info(
-                            f"Found non-provable item {item_unique_name} needing statement generation. Adding to list."
+                            f"Found non-provable item {item_unique_name} needing "
+                            f"statement generation. Adding to list."
                         )
                         pass
 
-                # Add all other eligible items (provable, or non-provable needing statement)
+                # Add all other eligible items (provable, or
+                # non-provable needing statement)
                 if item_unique_name not in items_to_process_names:
                     items_to_process_names.append(item_unique_name)
                     count_for_status += 1
@@ -1325,7 +1487,8 @@ async def process_pending_lean_items(
 
     if not items_to_process_names:
         logger.info(
-            "No eligible items found requiring Lean processing in the specified statuses."
+            "No eligible items found requiring Lean processing in the "
+            "specified statuses."
         )
         return
 
@@ -1349,26 +1512,33 @@ async def process_pending_lean_items(
             item_lean_code = getattr(current_item_state, "lean_code", None)
             needs_proof = item_type.requires_proof() if item_type else True
 
-            # Double-check eligibility based on latest status and whether processing is needed
+            # Double-check eligibility based on latest status and whether
+            # processing is needed
             is_eligible_status = item_status in process_statuses_set
-            # Processing is needed if it requires proof, OR if it doesn't but lacks code
+            # Processing is needed if it requires proof, OR if it doesn't
+            # but lacks code
             needs_processing = needs_proof or (not needs_proof and not item_lean_code)
 
             if not is_eligible_status or not needs_processing:
                 logger.info(
-                    f"Skipping {unique_name}: Status ({item_status.name if item_status else 'None'}) or state changed, no longer eligible for processing."
+                    f"Skipping {unique_name}: Status "
+                    f"({item_status.name if item_status else 'None'}) "
+                    f"or state changed, no longer eligible for processing."
                 )
                 continue
 
         except Exception as fetch_err:
             logger.error(
-                f"Error re-fetching state for {unique_name} before processing: {fetch_err}. Skipping."
+                f"Error re-fetching state for {unique_name} before processing: "
+                f"{fetch_err}. Skipping."
             )
             continue
 
         # Proceed with processing the eligible item
         logger.info(
-            f"--- Processing Lean for: {unique_name} (ID: {getattr(current_item_state, 'id', 'N/A')}, Status: {item_status.name if item_status else 'None'}) ---"
+            f"--- Processing Lean for: {unique_name} "
+            f"(ID: {getattr(current_item_state, 'id', 'N/A')}, "
+            f"Status: {item_status.name if item_status else 'None'}) ---"
         )
         processed_count += 1
         try:
@@ -1393,7 +1563,8 @@ async def process_pending_lean_items(
             # Attempt to mark item as ERROR in DB
             try:
                 err_item = get_kb_item_by_name(unique_name, effective_db_path)
-                # Only set ERROR if not already PROVEN (shouldn't happen if exception occurred)
+                # Only set ERROR if not already PROVEN
+                # (shouldn't happen if exception occurred)
                 if err_item and getattr(err_item, "status", None) != ItemStatus.PROVEN:
                     if hasattr(err_item, "update_status"):
                         err_item.update_status(
@@ -1405,11 +1576,13 @@ async def process_pending_lean_items(
                         )
             except Exception as save_err:
                 logger.error(
-                    f"Failed to save ERROR status for {unique_name} after batch crash: {save_err}"
+                    f"Failed to save ERROR status for {unique_name} "
+                    f"after batch crash: {save_err}"
                 )
 
         logger.info(f"--- Finished processing Lean for {unique_name} ---")
 
     logger.info(
-        f"Lean Batch Processing Complete. Total Processed: {processed_count}, Succeeded: {success_count}, Failed: {fail_count}"
+        f"Lean Batch Processing Complete. Total Processed: {processed_count}, "
+        f"Succeeded: {success_count}, Failed: {fail_count}"
     )

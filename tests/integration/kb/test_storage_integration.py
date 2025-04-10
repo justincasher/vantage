@@ -17,7 +17,8 @@ from datetime import datetime, timedelta, timezone
 import numpy as np  # Added for embedding tests
 import pytest
 
-# Import the module to be tested, assuming 'src' is discoverable or using path adjustments
+# Import the module to be tested, assuming 'src' is discoverable
+# or using path adjustments
 # If running pytest from the root directory, it should find lean_automator under src
 from lean_automator.kb import storage as kb_storage
 from lean_automator.kb.storage import (
@@ -78,8 +79,10 @@ def test_db() -> str:
     yield db_path
 
     # --- Teardown ---
-    # Use asyncio.run to potentially handle async cleanup if needed in future, though os.remove is sync
-    # For now, sync removal is fine, but wrap in async context for consistency if other async cleanup needed
+    # Use asyncio.run to potentially handle async cleanup if needed in future,
+    # though os.remove is sync
+    # For now, sync removal is fine, but wrap in async context for consistency
+    # if other async cleanup needed
     async def _cleanup():
         try:
             if os.path.exists(db_path):
@@ -89,7 +92,8 @@ def test_db() -> str:
             # Log warning but don't fail test run if cleanup fails
             logger.warning(f"Could not clean up test database '{db_path}': {e}")
 
-    # Run the synchronous os.remove within an async context if needed, or just call directly
+    # Run the synchronous os.remove within an async context if needed,
+    # or just call directly
     # If no other async teardown is required, direct sync call is simpler:
     try:
         if os.path.exists(db_path):
@@ -195,7 +199,8 @@ async def test_save_and_retrieve_new_item(test_db):
     saved_dict = asdict(saved_item)
     retrieved_dict = asdict(retrieved)
 
-    # Compare relevant fields explicitly or via dict comparison after removing mutable ones
+    # Compare relevant fields explicitly or via dict comparison
+    # after removing mutable ones
     assert retrieved_dict["unique_name"] == saved_dict["unique_name"]
     assert (
         retrieved_dict["item_type"] == saved_dict["item_type"]
@@ -268,8 +273,10 @@ async def test_update_item(test_db):
     assert updated_item.plan_dependencies == [
         "dep.goal.2"
     ]  # Check if save overwrites or appends based on implementation detail
-    # If save_kb_item *appends* based on instance methods, the initial [] would become ["dep.goal.2"]
-    # If save_kb_item *overwrites* based on item.to_dict_for_db, it will be ["dep.goal.2"]
+    # If save_kb_item *appends* based on instance methods, the initial []
+    # would become ["dep.goal.2"]
+    # If save_kb_item *overwrites* based on item.to_dict_for_db,
+    # it will be ["dep.goal.2"]
     # Let's assume overwrite for now.
 
     assert updated_item.failure_count == 1
@@ -559,7 +566,8 @@ async def test_complex_latex_links(test_db):
         "Incorrect number of LatexLinks retrieved"
     )
 
-    # Compare lists of dataclasses for equality (assumes __eq__ is default or defined correctly)
+    # Compare lists of dataclasses for equality
+    # (assumes __eq__ is default or defined correctly)
     assert retrieved_item.latex_links == links, (
         "Retrieved LatexLinks list content mismatch"
     )

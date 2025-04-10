@@ -55,7 +55,8 @@ def _update_nested_dict(d: Dict[str, Any], keys: List[str], value: Any):
         if not isinstance(d, dict):
             logger.error(
                 f"Config structure conflict: Expected dict at '{key}' "
-                f"while setting '{'.'.join(keys)}', found {type(d)}. Cannot apply value."
+                f"while setting '{'.'.join(keys)}', found {type(d)}. "
+                f"Cannot apply value."
             )
             return
     d[keys[-1]] = value
@@ -136,7 +137,8 @@ def load_configuration(
                 typed_value = target_type(env_value_str)
                 _update_nested_dict(config, config_keys, typed_value)
                 logger.info(
-                    f"Applied override: '{'.'.join(config_keys)}' (from env '{env_var}')"
+                    f"Applied override: '{'.'.join(config_keys)}' "
+                    f"(from env '{env_var}')"
                 )
                 override_count += 1
             except ValueError:
@@ -146,7 +148,8 @@ def load_configuration(
                 )
             except Exception as e:
                 logger.error(
-                    f"Override error: Unexpected issue applying env var '{env_var}': {e}",
+                    f"Override error: Unexpected issue applying env var '{env_var}': "
+                    f"{e}",
                     exc_info=True,
                 )
     if override_count > 0:

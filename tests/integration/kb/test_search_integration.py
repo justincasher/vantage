@@ -20,17 +20,16 @@ import pytest_asyncio
 logger = logging.getLogger(__name__)
 
 # Make sure pytest can find the src modules
-# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+# sys.path.insert(
+#     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src"))
+# )
 
 try:
     from lean_automator.kb.search import find_similar_items  # async
     from lean_automator.kb.storage import (
         EMBEDDING_DTYPE,
-        ItemStatus,
         ItemType,
         KBItem,
-        get_all_items_with_embedding,  # sync
-        get_kb_item_by_name,  # sync
         initialize_database,
         save_kb_item,  # async
     )
@@ -207,7 +206,8 @@ def mock_gemini_client_instance(mocker) -> MagicMock:
 
 
 # Ignore general warnings about GeminiClient/kb_search availability if imports fail
-# Ignore specific warnings about embedding generation during setup (handled by fixture mark)
+# Ignore specific warnings about embedding generation during setup
+# (handled by fixture mark)
 @pytest.mark.filterwarnings("ignore:GeminiClient/kb_search not available")
 @pytest.mark.integration
 class TestKBSearchIntegration:
@@ -234,7 +234,8 @@ class TestKBSearchIntegration:
         # --- Assertions ---
         assert len(results) == top_n, f"Expected {top_n} results, got {len(results)}"
 
-        # Check unique names in expected order of similarity (A > B > E based on manual calc)
+        # Check unique names in expected order of similarity
+        # (A > B > E based on manual calc)
         result_names = [item.unique_name for item, score in results]
         expected_names = ["item_A_nl", "item_B_nl", "item_E_nl"]
         assert result_names == expected_names, (
@@ -313,7 +314,8 @@ class TestKBSearchIntegration:
         expected_score = np.dot(norm_query, norm_doc_d)
 
         assert results[0][1] == pytest.approx(expected_score, abs=1e-4), (
-            f"Score mismatch for D: Expected ~{expected_score:.4f}, Got {results[0][1]:.4f}"
+            f"Score mismatch for D: Expected ~{expected_score:.4f}, "
+            f"Got {results[0][1]:.4f}"
         )
 
         # Verify mock call
@@ -342,8 +344,10 @@ class TestKBSearchIntegration:
         )
 
         # --- Assertions ---
-        # Even orthogonal vectors can have non-zero cosine similarity due to normalization/floating point.
-        # We expect results, but the top score should be low. E has a component in 4th dim.
+        # Even orthogonal vectors can have non-zero cosine similarity due to
+        # normalization/floating point.
+        # We expect results, but the top score should be low.
+        # E has a component in 4th dim.
         assert len(results) > 0, "Expected some results even for dissimilar query"
 
         # Calculate expected similarity for E (the only one with non-zero 4th dim)
@@ -394,7 +398,8 @@ class TestKBSearchIntegration:
             "item_B_nl",
         ]  # Based on similarity calculations
         assert result_names == expected_top_names, (
-            f"Expected top {top_n} results to be {expected_top_names}, Got {result_names}"
+            f"Expected top {top_n} results to be {expected_top_names}, "
+            f"Got {result_names}"
         )
 
     @pytest.mark.asyncio
@@ -426,7 +431,8 @@ class TestKBSearchIntegration:
         query = "no client query"
         search_field = "nl"
 
-        # The mock for generate_embedding is active, but find_similar_items should check client first
+        # The mock for generate_embedding is active, but find_similar_items
+        # should check client first
         # Expect a UserWarning and an empty list
         with pytest.warns(
             UserWarning, match="GeminiClient not available for embedding search"
