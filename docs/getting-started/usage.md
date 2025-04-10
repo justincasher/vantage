@@ -22,11 +22,8 @@ First, ensure the database schema exists and initialize the Gemini client. The c
 
 ```python
 import asyncio
-from lean_automator import kb_storage, llm_call
-# Call load_dotenv() to load variables from the .env file if you are using one
-# The config loader will automatically pick up environment variables regardless.
-from dotenv import load_dotenv
-load_dotenv() # Loads variables from .env into the environment
+from lean_automator.kb import storage as kb_storage
+from lean_automator.llm import caller as llm_call
 
 # Initialize the database (creates tables if they don't exist)
 # Uses the configured path (env var KB_DB_PATH or default from config.yml)
@@ -60,7 +57,7 @@ Let's create a simple definition and save it to the knowledge base.
 
 ```python
 # Continued from previous block...
-from lean_automator.kb_storage import KBItem, ItemType, ItemStatus, save_kb_item
+from lean_automator.kb.storage import KBItem, ItemType, ItemStatus, save_kb_item
 
 async def add_definition():
     print("\nCreating a new definition KBItem...")
@@ -138,7 +135,9 @@ Items often start with just a description. The `latex_processor` uses the LLM to
 
 ```python
 # Continued from previous block...
-from lean_automator import latex_processor
+from lean_automator.latex import processor as latex_processor
+from lean_automator.kb import storage as kb_storage 
+from lean_automator.kb.storage import ItemStatus
 
 async def process_latex(item_name: str):
     if not item_name:
@@ -192,7 +191,9 @@ Once LaTeX is accepted (`LATEX_ACCEPTED`), the `lean_processor` can generate and
 
 ```python
 # Continued from previous block...
-from lean_automator import lean_processor
+from lean_automator.lean import processor as lean_processor
+from lean_automator.kb import storage as kb_storage
+from lean_automator.kb.storage import ItemStatus
 
 async def process_lean(item_name: str, previous_step_success: bool):
     if not item_name or not previous_step_success:
@@ -260,7 +261,7 @@ After processing, items have embeddings (from description or LaTeX statement). W
 
 ```python
 # Continued from previous block...
-from lean_automator import kb_search
+from lean_automator.kb import search as kb_search
 
 async def perform_search(query: str):
     if not query:
