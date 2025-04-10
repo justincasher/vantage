@@ -21,18 +21,20 @@ logger = logging.getLogger(__name__)
 # Ensure logging is configured (e.g., by a root logger setup elsewhere or basicConfig)
 # If run standalone or root logger isn't set, this provides a default.
 if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: [%(name)s] %(message)s')
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s: [%(name)s] %(message)s"
+    )
 
 
 # Defines mappings from environment variables to nested configuration dictionary keys.
 # Format: (ENV_VARIABLE_NAME, [list, of, config, keys], target_type_for_conversion)
 ENV_OVERRIDES: List[Tuple[str, List[str], Type]] = [
-    ('KB_DB_PATH', ['database', 'kb_db_path'], str),
-    ('DEFAULT_GEMINI_MODEL', ['llm', 'default_gemini_model'], str),
-    ('GEMINI_MAX_RETRIES', ['llm', 'gemini_max_retries'], int),
-    ('GEMINI_BACKOFF_FACTOR', ['llm', 'gemini_backoff_factor'], float),
-    ('DEFAULT_EMBEDDING_MODEL', ['embedding', 'default_embedding_model'], str),
-    ('LATEX_MAX_REVIEW_CYCLES', ['latex', 'max_review_cycles'], int),
+    ("KB_DB_PATH", ["database", "kb_db_path"], str),
+    ("DEFAULT_GEMINI_MODEL", ["llm", "default_gemini_model"], str),
+    ("GEMINI_MAX_RETRIES", ["llm", "gemini_max_retries"], int),
+    ("GEMINI_BACKOFF_FACTOR", ["llm", "gemini_backoff_factor"], float),
+    ("DEFAULT_EMBEDDING_MODEL", ["embedding", "default_embedding_model"], str),
+    ("LATEX_MAX_REVIEW_CYCLES", ["latex", "max_review_cycles"], int),
 ]
 
 
@@ -59,10 +61,10 @@ def _update_nested_dict(d: Dict[str, Any], keys: List[str], value: Any):
 
 
 def load_configuration(
-    config_path: str = 'config.yml',
-    costs_path: str = 'model_costs.json',
+    config_path: str = "config.yml",
+    costs_path: str = "model_costs.json",
     dotenv_path: Optional[str] = None,
-    env_override_map: List[Tuple[str, List[str], Type]] = ENV_OVERRIDES
+    env_override_map: List[Tuple[str, List[str], Type]] = ENV_OVERRIDES,
 ) -> Dict[str, Any]:
     """Loads configuration layers: YAML defaults, JSON costs, and env overrides.
 
@@ -89,7 +91,7 @@ def load_configuration(
 
     # Load Base YAML Configuration
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
         logger.info(f"Loaded base config from '{config_path}'.")
     except FileNotFoundError:
@@ -97,32 +99,31 @@ def load_configuration(
     except yaml.YAMLError as e:
         logger.error(f"Error parsing YAML '{config_path}': {e}", exc_info=True)
         # Decide on behavior: return empty, raise error? Returning empty for robustness.
-        return {} # Critical error parsing base config, return empty
+        return {}  # Critical error parsing base config, return empty
 
     # Load and Merge JSON Costs Data
     try:
-        with open(costs_path, 'r', encoding='utf-8') as f:
+        with open(costs_path, "r", encoding="utf-8") as f:
             model_costs = json.load(f)
-        if 'costs' not in config or not isinstance(config.get('costs'), dict):
-             config['costs'] = {}
-        config['costs'].update(model_costs)
+        if "costs" not in config or not isinstance(config.get("costs"), dict):
+            config["costs"] = {}
+        config["costs"].update(model_costs)
         logger.info(f"Loaded and merged costs from '{costs_path}'.")
     except FileNotFoundError:
         logger.warning(f"Costs file '{costs_path}' not found.")
-        config.setdefault('costs', {})
+        config.setdefault("costs", {})
     except json.JSONDecodeError as e:
         logger.error(f"Error parsing JSON costs '{costs_path}': {e}", exc_info=True)
-        config.setdefault('costs', {})
+        config.setdefault("costs", {})
 
     # Load .env file into environment variables
     try:
         loaded_env = load_dotenv(dotenv_path=dotenv_path, verbose=True)
         if loaded_env:
-             logger.info(".env file loaded into environment variables.")
+            logger.info(".env file loaded into environment variables.")
     except Exception as e:
         # Catch potential errors during dotenv loading (e.g., permission issues)
         logger.error(f"Error loading .env file: {e}", exc_info=True)
-
 
     # Apply Environment Variable Overrides
     logger.info("Checking for environment variable overrides...")
@@ -133,7 +134,9 @@ def load_configuration(
             try:
                 typed_value = target_type(env_value_str)
                 _update_nested_dict(config, config_keys, typed_value)
-                logger.info(f"Applied override: '{'.'.join(config_keys)}' (from env '{env_var}')")
+                logger.info(
+                    f"Applied override: '{'.'.join(config_keys)}' (from env '{env_var}')"
+                )
                 override_count += 1
             except ValueError:
                 logger.warning(
@@ -143,12 +146,12 @@ def load_configuration(
             except Exception as e:
                 logger.error(
                     f"Override error: Unexpected issue applying env var '{env_var}': {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
     if override_count > 0:
-         logger.info(f"Applied {override_count} environment variable override(s).")
+        logger.info(f"Applied {override_count} environment variable override(s).")
     else:
-         logger.info("No environment variable overrides applied.")
+        logger.info("No environment variable overrides applied.")
 
     return config
 
@@ -160,6 +163,7 @@ APP_CONFIG: Dict[str, Any] = load_configuration()
 
 # --- Direct Accessors for Sensitive/Specific Environment Variables ---
 
+
 def get_gemini_api_key() -> Optional[str]:
     """Retrieves the Gemini API Key directly from environment variables.
 
@@ -167,7 +171,7 @@ def get_gemini_api_key() -> Optional[str]:
         The Gemini API key string if the 'GEMINI_API_KEY' environment
         variable is set, otherwise None.
     """
-    return os.getenv('GEMINI_API_KEY')
+    return os.getenv("GEMINI_API_KEY")
 
 
 def get_lean_automator_shared_lib_path() -> Optional[str]:
@@ -177,7 +181,7 @@ def get_lean_automator_shared_lib_path() -> Optional[str]:
         The path string if the 'LEAN_AUTOMATOR_SHARED_LIB_PATH' environment
         variable is set, otherwise None.
     """
-    return os.getenv('LEAN_AUTOMATOR_SHARED_LIB_PATH')
+    return os.getenv("LEAN_AUTOMATOR_SHARED_LIB_PATH")
 
 
 # --- Example Usage / Standalone Test ---
@@ -186,24 +190,26 @@ if __name__ == "__main__":
     print("\n--- Running Config Loader Standalone Test ---")
 
     # Use a separate logger config for standalone test if needed
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: [%(name)s] %(message)s')
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s: [%(name)s] %(message)s"
+    )
 
     print("\n--- Loaded Configuration (APP_CONFIG) ---")
     import pprint
+
     pprint.pprint(APP_CONFIG)
 
     print("\n--- Accessing Values Example ---")
-    db_path = APP_CONFIG.get('database', {}).get('kb_db_path', 'N/A')
-    llm_model = APP_CONFIG.get('llm', {}).get('default_gemini_model', 'N/A')
+    db_path = APP_CONFIG.get("database", {}).get("kb_db_path", "N/A")
+    llm_model = APP_CONFIG.get("llm", {}).get("default_gemini_model", "N/A")
     print(f"Database Path: {db_path}")
     print(f"LLM Model: {llm_model}")
-    cost_info = APP_CONFIG.get('costs', {}).get('gemini-2.0-flash', {})
+    cost_info = APP_CONFIG.get("costs", {}).get("gemini-2.0-flash", {})
     print(f"Costs for gemini-2.0-flash: {cost_info if cost_info else 'N/A'}")
-
 
     print("\n--- Accessing Secrets/Paths Directly Example ---")
     api_key = get_gemini_api_key()
-    print(f"Gemini API Key Set: {bool(api_key)}") # Avoid printing keys
+    print(f"Gemini API Key Set: {bool(api_key)}")  # Avoid printing keys
     shared_path = get_lean_automator_shared_lib_path()
     print(f"Lean Lib Path: {shared_path if shared_path else 'N/A'}")
 

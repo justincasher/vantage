@@ -12,20 +12,23 @@ import os
 import sqlite3
 import pytest
 import json
-import numpy as np # Added for embedding tests
-import asyncio # Added for async calls
+import numpy as np  # Added for embedding tests
+import asyncio  # Added for async calls
 from dataclasses import asdict
 from datetime import datetime, timezone, timedelta
-import time # Import time for sleep
-import logging # Import logging
+import time  # Import time for sleep
+import logging  # Import logging
 
 # Import the module to be tested, assuming 'src' is discoverable or using path adjustments
 # If running pytest from the root directory, it should find lean_automator under src
 from lean_automator.kb import storage as kb_storage
 from lean_automator.kb.storage import (
-    KBItem, ItemType, ItemStatus, LatexLink,
-    DEFAULT_DB_PATH, # Import the default path for comparison if needed
-    EMBEDDING_DTYPE # Import dtype for embedding tests
+    KBItem,
+    ItemType,
+    ItemStatus,
+    LatexLink,
+    DEFAULT_DB_PATH,  # Import the default path for comparison if needed
+    EMBEDDING_DTYPE,  # Import dtype for embedding tests
 )
 
 # --- Apply the integration mark to all tests in this module ---
@@ -41,7 +44,10 @@ TEST_DB_FILENAME = "test_integration_kb.sqlite"
 
 # --- Pytest Fixture for Database Setup/Teardown ---
 
-@pytest.fixture(scope="function") # Use "function" scope to get a fresh DB for each test
+
+@pytest.fixture(
+    scope="function"
+)  # Use "function" scope to get a fresh DB for each test
 def test_db() -> str:
     """Sets up and tears down the test SQLite database for each test function.
 
@@ -85,6 +91,7 @@ def test_db() -> str:
         except OSError as e:
             # Log warning but don't fail test run if cleanup fails
             logger.warning(f"Could not clean up test database '{db_path}': {e}")
+
     # Run the synchronous os.remove within an async context if needed, or just call directly
     # If no other async teardown is required, direct sync call is simpler:
     try:
@@ -98,6 +105,7 @@ def test_db() -> str:
 
 # --- Test Functions ---
 
+
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_initialization(test_db):
@@ -108,16 +116,34 @@ async def test_initialization(test_db):
     with kb_storage.get_db_connection(test_db) as conn:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(kb_items);")
-        columns = {row['name'] for row in cursor.fetchall()}
+        columns = {row["name"] for row in cursor.fetchall()}
 
     expected_columns = {
-        'id', 'unique_name', 'item_type', 'description_nl', 'latex_statement',
-        'latex_proof', 'lean_code', 'embedding_nl', 'embedding_latex', 'topic',
-        'plan_dependencies', 'dependencies', 'latex_links', 'status',
-        'failure_count', 'latex_review_feedback', 'generation_prompt',
-        'raw_ai_response', 'lean_error_log', 'created_at', 'last_modified_at'
+        "id",
+        "unique_name",
+        "item_type",
+        "description_nl",
+        "latex_statement",
+        "latex_proof",
+        "lean_code",
+        "embedding_nl",
+        "embedding_latex",
+        "topic",
+        "plan_dependencies",
+        "dependencies",
+        "latex_links",
+        "status",
+        "failure_count",
+        "latex_review_feedback",
+        "generation_prompt",
+        "raw_ai_response",
+        "lean_error_log",
+        "created_at",
+        "last_modified_at",
     }
-    assert expected_columns.issubset(columns), f"Missing columns: {expected_columns - columns}"
+    assert expected_columns.issubset(columns), (
+        f"Missing columns: {expected_columns - columns}"
+    )
 
     # Verify idempotency: initializing again should not raise errors
     try:
@@ -127,13 +153,16 @@ async def test_initialization(test_db):
     except Exception as e:
         pytest.fail(f"Initializing database second time failed unexpectedly: {e}")
 
+
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_save_and_retrieve_new_item(test_db):
     """Test saving a completely new KBItem and retrieving it accurately."""
     plan_deps = ["Prerequisite.Goal.A"]
     links = [LatexLink(citation_text="Ref B, Def 2")]
-    item_time = datetime.now(timezone.utc) - timedelta(minutes=1) # Ensure time is distinct
+    item_time = datetime.now(timezone.utc) - timedelta(
+        minutes=1
+    )  # Ensure time is distinct
 
     item = KBItem(
         unique_name="test.def.item_v2",
@@ -143,13 +172,13 @@ async def test_save_and_retrieve_new_item(test_db):
         lean_code="def ItemV2 := Nat",
         description_nl="Basic definition of ItemV2.",
         topic="Core.V2",
-        status=ItemStatus.PENDING, # Explicitly set default status
+        status=ItemStatus.PENDING,  # Explicitly set default status
         plan_dependencies=plan_deps,
         dependencies=[],
         latex_links=links,
-        failure_count=0, # Explicitly set default
-        created_at=item_time, # Control creation time for comparison
-        last_modified_at=item_time # Control modification time for comparison
+        failure_count=0,  # Explicitly set default
+        created_at=item_time,  # Control creation time for comparison
+        last_modified_at=item_time,  # Control modification time for comparison
     )
 
     # Save item (client=None prevents embedding generation attempt)
@@ -157,7 +186,7 @@ async def test_save_and_retrieve_new_item(test_db):
 
     # Assertions on saved item
     assert saved_item.id is not None, "ID should be assigned by DB"
-    assert saved_item.created_at == item_time # Should persist explicitly set time
+    assert saved_item.created_at == item_time  # Should persist explicitly set time
     # last_modified_at might be updated by save_kb_item, check it's >= initial
     assert saved_item.last_modified_at >= item_time
 
@@ -170,27 +199,37 @@ async def test_save_and_retrieve_new_item(test_db):
     retrieved_dict = asdict(retrieved)
 
     # Compare relevant fields explicitly or via dict comparison after removing mutable ones
-    assert retrieved_dict['unique_name'] == saved_dict['unique_name']
-    assert retrieved_dict['item_type'] == saved_dict['item_type'] # Enums compared directly
-    assert retrieved_dict['latex_statement'] == saved_dict['latex_statement']
-    assert retrieved_dict['latex_proof'] is None # Check None for DEFINITION
-    assert retrieved_dict['lean_code'] == saved_dict['lean_code']
-    assert retrieved_dict['description_nl'] == saved_dict['description_nl']
-    assert retrieved_dict['topic'] == saved_dict['topic']
-    assert retrieved_dict['status'] == saved_dict['status'] # Enums compared directly
-    assert retrieved_dict['plan_dependencies'] == saved_dict['plan_dependencies']
-    assert retrieved_dict['dependencies'] == saved_dict['dependencies']
-    assert retrieved_dict['latex_links'] == saved_dict['latex_links'] # Compare list of dataclasses
-    assert retrieved_dict['failure_count'] == saved_dict['failure_count']
-    assert retrieved_dict['embedding_nl'] is None
-    assert retrieved_dict['embedding_latex'] is None
-    assert retrieved_dict['latex_review_feedback'] is None
+    assert retrieved_dict["unique_name"] == saved_dict["unique_name"]
+    assert (
+        retrieved_dict["item_type"] == saved_dict["item_type"]
+    )  # Enums compared directly
+    assert retrieved_dict["latex_statement"] == saved_dict["latex_statement"]
+    assert retrieved_dict["latex_proof"] is None  # Check None for DEFINITION
+    assert retrieved_dict["lean_code"] == saved_dict["lean_code"]
+    assert retrieved_dict["description_nl"] == saved_dict["description_nl"]
+    assert retrieved_dict["topic"] == saved_dict["topic"]
+    assert retrieved_dict["status"] == saved_dict["status"]  # Enums compared directly
+    assert retrieved_dict["plan_dependencies"] == saved_dict["plan_dependencies"]
+    assert retrieved_dict["dependencies"] == saved_dict["dependencies"]
+    assert (
+        retrieved_dict["latex_links"] == saved_dict["latex_links"]
+    )  # Compare list of dataclasses
+    assert retrieved_dict["failure_count"] == saved_dict["failure_count"]
+    assert retrieved_dict["embedding_nl"] is None
+    assert retrieved_dict["embedding_latex"] is None
+    assert retrieved_dict["latex_review_feedback"] is None
     # Timestamps might differ slightly due to DB precision or save_kb_item updates
-    assert abs(retrieved_dict['created_at'] - saved_dict['created_at']) < timedelta(seconds=1)
-    assert abs(retrieved_dict['last_modified_at'] - saved_dict['last_modified_at']) < timedelta(seconds=1)
+    assert abs(retrieved_dict["created_at"] - saved_dict["created_at"]) < timedelta(
+        seconds=1
+    )
+    assert abs(
+        retrieved_dict["last_modified_at"] - saved_dict["last_modified_at"]
+    ) < timedelta(seconds=1)
 
     # Test retrieval by name
-    retrieved_by_name = kb_storage.get_kb_item_by_name("test.def.item_v2", db_path=test_db)
+    retrieved_by_name = kb_storage.get_kb_item_by_name(
+        "test.def.item_v2", db_path=test_db
+    )
     assert retrieved_by_name is not None, "Failed to retrieve item by name"
     assert retrieved_by_name.id == saved_item.id
 
@@ -204,7 +243,7 @@ async def test_update_item(test_db):
     saved_item = await kb_storage.save_kb_item(item, client=None, db_path=test_db)
     original_id = saved_item.id
     original_mod_time = saved_item.last_modified_at
-    await asyncio.sleep(0.01) # Ensure time progresses
+    await asyncio.sleep(0.01)  # Ensure time progresses
 
     # Modify retrieved item
     saved_item.status = ItemStatus.PENDING_LATEX_REVIEW
@@ -217,7 +256,9 @@ async def test_update_item(test_db):
     saved_item.latex_review_feedback = "Typo in definition X."
 
     # Save changes (UPSERT should trigger UPDATE)
-    updated_item = await kb_storage.save_kb_item(saved_item, client=None, db_path=test_db)
+    updated_item = await kb_storage.save_kb_item(
+        saved_item, client=None, db_path=test_db
+    )
 
     # Assertions on updated item
     assert updated_item.id == original_id
@@ -227,7 +268,9 @@ async def test_update_item(test_db):
     # Note: KBItem methods append, plan_dependencies depends on initial state
     # Need to re-fetch initial state if testing specific append logic vs overwrite.
     # Assuming save_kb_item overwrites lists based on current object state:
-    assert updated_item.plan_dependencies == ["dep.goal.2"] # Check if save overwrites or appends based on implementation detail
+    assert updated_item.plan_dependencies == [
+        "dep.goal.2"
+    ]  # Check if save overwrites or appends based on implementation detail
     # If save_kb_item *appends* based on instance methods, the initial [] would become ["dep.goal.2"]
     # If save_kb_item *overwrites* based on item.to_dict_for_db, it will be ["dep.goal.2"]
     # Let's assume overwrite for now.
@@ -243,7 +286,9 @@ async def test_update_item(test_db):
     assert retrieved_again is not None
     assert retrieved_again.status == ItemStatus.PENDING_LATEX_REVIEW
     assert retrieved_again.failure_count == 1
-    assert retrieved_again.plan_dependencies == ["dep.goal.2"] # Verify overwrite assumption
+    assert retrieved_again.plan_dependencies == [
+        "dep.goal.2"
+    ]  # Verify overwrite assumption
     assert retrieved_again.latex_review_feedback == "Typo in definition X."
 
 
@@ -252,14 +297,22 @@ async def test_update_item(test_db):
 async def test_unique_name_conflict_upsert(test_db):
     """Verify UPSERT behavior: saving with existing unique_name updates fields."""
     # Save initial item
-    item1 = KBItem(unique_name="test.upsert.conflict.v2", item_type=ItemType.THEOREM, lean_code="V1", failure_count=0)
+    item1 = KBItem(
+        unique_name="test.upsert.conflict.v2",
+        item_type=ItemType.THEOREM,
+        lean_code="V1",
+        failure_count=0,
+    )
     saved1 = await kb_storage.save_kb_item(item1, client=None, db_path=test_db)
     await asyncio.sleep(0.01)
 
     # Save second item with SAME unique_name but different content
     item2 = KBItem(
-        unique_name="test.upsert.conflict.v2", item_type=ItemType.THEOREM,
-        lean_code="V2", status=ItemStatus.PROVEN, failure_count=5
+        unique_name="test.upsert.conflict.v2",
+        item_type=ItemType.THEOREM,
+        lean_code="V2",
+        status=ItemStatus.PROVEN,
+        failure_count=5,
     )
     saved2 = await kb_storage.save_kb_item(item2, client=None, db_path=test_db)
 
@@ -268,62 +321,110 @@ async def test_unique_name_conflict_upsert(test_db):
     assert saved2.lean_code == "V2", "lean_code should be updated"
     assert saved2.status == ItemStatus.PROVEN, "status should be updated"
     assert saved2.failure_count == 5, "failure_count should be updated"
-    assert saved2.last_modified_at > saved1.last_modified_at, "last_modified_at should update"
+    assert saved2.last_modified_at > saved1.last_modified_at, (
+        "last_modified_at should update"
+    )
 
     # Verify by retrieving
-    retrieved = kb_storage.get_kb_item_by_name("test.upsert.conflict.v2", db_path=test_db)
+    retrieved = kb_storage.get_kb_item_by_name(
+        "test.upsert.conflict.v2", db_path=test_db
+    )
     assert retrieved is not None
     assert retrieved.id == saved1.id
     assert retrieved.lean_code == "V2"
     assert retrieved.status == ItemStatus.PROVEN
     assert retrieved.failure_count == 5
 
+
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_get_items_by_status(test_db):
     """Verify retrieving items filtered by their status."""
     # Save items with various statuses
-    statuses_to_test = [ItemStatus.PENDING, ItemStatus.PROVEN, ItemStatus.LEAN_VALIDATION_FAILED, ItemStatus.LATEX_ACCEPTED]
+    statuses_to_test = [
+        ItemStatus.PENDING,
+        ItemStatus.PROVEN,
+        ItemStatus.LEAN_VALIDATION_FAILED,
+        ItemStatus.LATEX_ACCEPTED,
+    ]
     for i, status in enumerate(statuses_to_test):
         await kb_storage.save_kb_item(
             KBItem(unique_name=f"t_status.{status.name}_{i}", status=status),
-            client=None, db_path=test_db
+            client=None,
+            db_path=test_db,
         )
     # Add a duplicate status
-    await kb_storage.save_kb_item(KBItem(unique_name="t_status.PENDING_1", status=ItemStatus.PENDING), client=None, db_path=test_db)
-
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_status.PENDING_1", status=ItemStatus.PENDING),
+        client=None,
+        db_path=test_db,
+    )
 
     # Test retrieval for each status
-    pending_items = list(kb_storage.get_items_by_status(ItemStatus.PENDING, db_path=test_db))
+    pending_items = list(
+        kb_storage.get_items_by_status(ItemStatus.PENDING, db_path=test_db)
+    )
     assert len(pending_items) == 2, "Expected 2 PENDING items"
-    assert {item.unique_name for item in pending_items} == {"t_status.PENDING_0", "t_status.PENDING_1"}
+    assert {item.unique_name for item in pending_items} == {
+        "t_status.PENDING_0",
+        "t_status.PENDING_1",
+    }
 
-    proven_items = list(kb_storage.get_items_by_status(ItemStatus.PROVEN, db_path=test_db))
+    proven_items = list(
+        kb_storage.get_items_by_status(ItemStatus.PROVEN, db_path=test_db)
+    )
     assert len(proven_items) == 1, "Expected 1 PROVEN item"
     assert proven_items[0].unique_name == "t_status.PROVEN_1"
 
-    failed_items = list(kb_storage.get_items_by_status(ItemStatus.LEAN_VALIDATION_FAILED, db_path=test_db))
+    failed_items = list(
+        kb_storage.get_items_by_status(
+            ItemStatus.LEAN_VALIDATION_FAILED, db_path=test_db
+        )
+    )
     assert len(failed_items) == 1
     assert failed_items[0].unique_name == "t_status.LEAN_VALIDATION_FAILED_2"
 
-    accepted_items = list(kb_storage.get_items_by_status(ItemStatus.LATEX_ACCEPTED, db_path=test_db))
+    accepted_items = list(
+        kb_storage.get_items_by_status(ItemStatus.LATEX_ACCEPTED, db_path=test_db)
+    )
     assert len(accepted_items) == 1
     assert accepted_items[0].unique_name == "t_status.LATEX_ACCEPTED_3"
 
     # Test retrieving a status with no items
-    error_items = list(kb_storage.get_items_by_status(ItemStatus.ERROR, db_path=test_db))
+    error_items = list(
+        kb_storage.get_items_by_status(ItemStatus.ERROR, db_path=test_db)
+    )
     assert len(error_items) == 0, "Expected 0 ERROR items"
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_get_items_by_topic(test_db):
     """Verify retrieving items filtered by topic prefix."""
     # Save items with different topics
-    await kb_storage.save_kb_item(KBItem(unique_name="t_topic.core.types", topic="Core.Types"), client=None, db_path=test_db)
-    await kb_storage.save_kb_item(KBItem(unique_name="t_topic.core.nat", topic="Core.Nat"), client=None, db_path=test_db)
-    await kb_storage.save_kb_item(KBItem(unique_name="t_topic.algebra.groups", topic="Algebra.Groups"), client=None, db_path=test_db)
-    await kb_storage.save_kb_item(KBItem(unique_name="t_topic.core", topic="Core"), client=None, db_path=test_db)
-    await kb_storage.save_kb_item(KBItem(unique_name="t_topic.analysis.calculus", topic="Analysis.Calculus"), client=None, db_path=test_db)
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_topic.core.types", topic="Core.Types"),
+        client=None,
+        db_path=test_db,
+    )
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_topic.core.nat", topic="Core.Nat"),
+        client=None,
+        db_path=test_db,
+    )
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_topic.algebra.groups", topic="Algebra.Groups"),
+        client=None,
+        db_path=test_db,
+    )
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_topic.core", topic="Core"), client=None, db_path=test_db
+    )
+    await kb_storage.save_kb_item(
+        KBItem(unique_name="t_topic.analysis.calculus", topic="Analysis.Calculus"),
+        client=None,
+        db_path=test_db,
+    )
 
     # Test retrieving by prefix "Core" (should match Core, Core.Types, Core.Nat)
     core_items = list(kb_storage.get_items_by_topic("Core", db_path=test_db))
@@ -342,7 +443,9 @@ async def test_get_items_by_topic(test_db):
     assert algebra_items[0].unique_name == "t_topic.algebra.groups"
 
     # Test retrieving by prefix not matching any topic
-    calculus_items = list(kb_storage.get_items_by_topic("Calculus", db_path=test_db)) # Note: Case-sensitive
+    calculus_items = list(
+        kb_storage.get_items_by_topic("Calculus", db_path=test_db)
+    )  # Note: Case-sensitive
     assert len(calculus_items) == 0
 
     # Test retrieving all items (empty prefix)
@@ -353,10 +456,17 @@ async def test_get_items_by_topic(test_db):
 def test_retrieve_non_existent(test_db):
     """Verify retrieving non-existent items by ID or name returns None."""
     retrieved_id = kb_storage.get_kb_item_by_id(99999, db_path=test_db)
-    assert retrieved_id is None, "get_kb_item_by_id should return None for non-existent ID"
+    assert retrieved_id is None, (
+        "get_kb_item_by_id should return None for non-existent ID"
+    )
 
-    retrieved_name = kb_storage.get_kb_item_by_name("test.non_existent.name", db_path=test_db)
-    assert retrieved_name is None, "get_kb_item_by_name should return None for non-existent name"
+    retrieved_name = kb_storage.get_kb_item_by_name(
+        "test.non_existent.name", db_path=test_db
+    )
+    assert retrieved_name is None, (
+        "get_kb_item_by_name should return None for non-existent name"
+    )
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
@@ -370,45 +480,77 @@ async def test_save_and_retrieve_embeddings(test_db):
         unique_name="test.with.embeddings",
         item_type=ItemType.EXAMPLE,
         latex_statement="Example statement",
-        latex_proof="Example proof", # Example can have proof
-        embedding_latex=embedding_data_latex, # Set manually
-        embedding_nl=embedding_data_nl,       # Set manually
+        latex_proof="Example proof",  # Example can have proof
+        embedding_latex=embedding_data_latex,  # Set manually
+        embedding_nl=embedding_data_nl,  # Set manually
     )
     # Save without client - this should preserve the manually set embeddings
     saved_item = await kb_storage.save_kb_item(item, client=None, db_path=test_db)
 
     # Assertions after save
     assert saved_item.id is not None
-    assert saved_item.embedding_latex == embedding_data_latex, "Manually set latex embedding was overwritten/lost"
-    assert saved_item.embedding_nl == embedding_data_nl, "Manually set nl embedding was overwritten/lost"
+    assert saved_item.embedding_latex == embedding_data_latex, (
+        "Manually set latex embedding was overwritten/lost"
+    )
+    assert saved_item.embedding_nl == embedding_data_nl, (
+        "Manually set nl embedding was overwritten/lost"
+    )
 
     # Retrieve and verify stored blobs
     retrieved_item = kb_storage.get_kb_item_by_id(saved_item.id, db_path=test_db)
     assert retrieved_item is not None
-    assert retrieved_item.embedding_latex == embedding_data_latex, "Retrieved latex embedding blob mismatch"
-    assert retrieved_item.embedding_nl == embedding_data_nl, "Retrieved nl embedding blob mismatch"
+    assert retrieved_item.embedding_latex == embedding_data_latex, (
+        "Retrieved latex embedding blob mismatch"
+    )
+    assert retrieved_item.embedding_nl == embedding_data_nl, (
+        "Retrieved nl embedding blob mismatch"
+    )
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_complex_dependencies(test_db):
     """Verify saving and retrieving item with a list of Lean dependencies."""
-    deps = ["Core.Init.Default", "Algebra.Group.Defs", "Topology.Basic", "MyProject.Module.Sub"]
-    item = KBItem(unique_name="test.complex.deps", dependencies=deps) # Use default type/status etc.
+    deps = [
+        "Core.Init.Default",
+        "Algebra.Group.Defs",
+        "Topology.Basic",
+        "MyProject.Module.Sub",
+    ]
+    item = KBItem(
+        unique_name="test.complex.deps", dependencies=deps
+    )  # Use default type/status etc.
     saved_item = await kb_storage.save_kb_item(item, client=None, db_path=test_db)
     assert saved_item.id is not None
 
     retrieved_item = kb_storage.get_kb_item_by_id(saved_item.id, db_path=test_db)
     assert retrieved_item is not None
-    assert retrieved_item.dependencies == deps, "Retrieved Lean dependencies list mismatch"
+    assert retrieved_item.dependencies == deps, (
+        "Retrieved Lean dependencies list mismatch"
+    )
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_complex_latex_links(test_db):
     """Verify saving and retrieving item with multiple complex LatexLink objects."""
     links = [
-        LatexLink(citation_text="S1", link_type="definition", source_identifier="DOI:X"),
-        LatexLink(citation_text="S2", link_type="proof", source_identifier="URL:Y", verified_by_human=True),
-        LatexLink(citation_text="S3", link_type="statement", source_identifier=None, latex_snippet="x=y", match_confidence=0.9)
+        LatexLink(
+            citation_text="S1", link_type="definition", source_identifier="DOI:X"
+        ),
+        LatexLink(
+            citation_text="S2",
+            link_type="proof",
+            source_identifier="URL:Y",
+            verified_by_human=True,
+        ),
+        LatexLink(
+            citation_text="S3",
+            link_type="statement",
+            source_identifier=None,
+            latex_snippet="x=y",
+            match_confidence=0.9,
+        ),
     ]
     item = KBItem(unique_name="test.complex.links", latex_links=links)
     saved_item = await kb_storage.save_kb_item(item, client=None, db_path=test_db)
@@ -416,12 +558,18 @@ async def test_complex_latex_links(test_db):
 
     retrieved_item = kb_storage.get_kb_item_by_id(saved_item.id, db_path=test_db)
     assert retrieved_item is not None
-    assert len(retrieved_item.latex_links) == len(links), "Incorrect number of LatexLinks retrieved"
+    assert len(retrieved_item.latex_links) == len(links), (
+        "Incorrect number of LatexLinks retrieved"
+    )
 
     # Compare lists of dataclasses for equality (assumes __eq__ is default or defined correctly)
-    assert retrieved_item.latex_links == links, "Retrieved LatexLinks list content mismatch"
+    assert retrieved_item.latex_links == links, (
+        "Retrieved LatexLinks list content mismatch"
+    )
+
 
 # --- New Tests for Plan Dependencies and Failure Count ---
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
@@ -433,23 +581,30 @@ async def test_add_plan_dependency(test_db):
 
     # Add dependencies and check updates
     saved_item.add_plan_dependency("plan.dep.1")
-    updated_item1 = await kb_storage.save_kb_item(saved_item, client=None, db_path=test_db)
+    updated_item1 = await kb_storage.save_kb_item(
+        saved_item, client=None, db_path=test_db
+    )
     assert updated_item1.plan_dependencies == ["plan.dep.1"]
 
     # Add same again (should not duplicate)
     updated_item1.add_plan_dependency("plan.dep.1")
-    updated_item2 = await kb_storage.save_kb_item(updated_item1, client=None, db_path=test_db)
+    updated_item2 = await kb_storage.save_kb_item(
+        updated_item1, client=None, db_path=test_db
+    )
     assert updated_item2.plan_dependencies == ["plan.dep.1"]
 
     # Add second dependency
     updated_item2.add_plan_dependency("plan.dep.2")
-    updated_item3 = await kb_storage.save_kb_item(updated_item2, client=None, db_path=test_db)
+    updated_item3 = await kb_storage.save_kb_item(
+        updated_item2, client=None, db_path=test_db
+    )
     assert updated_item3.plan_dependencies == ["plan.dep.1", "plan.dep.2"]
 
     # Retrieve final state and verify
     retrieved = kb_storage.get_kb_item_by_id(saved_item.id, db_path=test_db)
     assert retrieved is not None
     assert retrieved.plan_dependencies == ["plan.dep.1", "plan.dep.2"]
+
 
 # Mark tests that call async functions
 @pytest.mark.asyncio
@@ -462,11 +617,15 @@ async def test_increment_failure_count(test_db):
 
     # Increment and save multiple times
     saved_item.increment_failure_count()
-    updated_item1 = await kb_storage.save_kb_item(saved_item, client=None, db_path=test_db)
+    updated_item1 = await kb_storage.save_kb_item(
+        saved_item, client=None, db_path=test_db
+    )
     assert updated_item1.failure_count == 1
 
     updated_item1.increment_failure_count()
-    updated_item2 = await kb_storage.save_kb_item(updated_item1, client=None, db_path=test_db)
+    updated_item2 = await kb_storage.save_kb_item(
+        updated_item1, client=None, db_path=test_db
+    )
     assert updated_item2.failure_count == 2
 
     # Retrieve final state and verify
@@ -474,28 +633,47 @@ async def test_increment_failure_count(test_db):
     assert retrieved is not None
     assert retrieved.failure_count == 2
 
+
 # Mark tests that call async functions
 @pytest.mark.asyncio
 async def test_item_type_requires_proof_handling(test_db):
     """Verify latex_proof is None when ItemType does not require proof."""
     # Test case 1: Theorem (requires proof)
-    item_thm = KBItem(unique_name="test.proof.required", item_type=ItemType.THEOREM, latex_proof="Proof content")
+    item_thm = KBItem(
+        unique_name="test.proof.required",
+        item_type=ItemType.THEOREM,
+        latex_proof="Proof content",
+    )
     saved_thm = await kb_storage.save_kb_item(item_thm, client=None, db_path=test_db)
     retrieved_thm = kb_storage.get_kb_item_by_id(saved_thm.id, db_path=test_db)
-    assert retrieved_thm.latex_proof == "Proof content", "Proof should be saved for Theorem"
+    assert retrieved_thm.latex_proof == "Proof content", (
+        "Proof should be saved for Theorem"
+    )
 
     # Test case 2: Definition (does not require proof)
-    item_def = KBItem(unique_name="test.proof.not_required", item_type=ItemType.DEFINITION, latex_proof="Should be ignored")
+    item_def = KBItem(
+        unique_name="test.proof.not_required",
+        item_type=ItemType.DEFINITION,
+        latex_proof="Should be ignored",
+    )
     # Check __post_init__ or save logic nullifies it
-    assert item_def.latex_proof is None, "Proof should be None after __post_init__ for Definition"
+    assert item_def.latex_proof is None, (
+        "Proof should be None after __post_init__ for Definition"
+    )
     saved_def = await kb_storage.save_kb_item(item_def, client=None, db_path=test_db)
     retrieved_def = kb_storage.get_kb_item_by_id(saved_def.id, db_path=test_db)
-    assert retrieved_def.latex_proof is None, "Proof should be None in DB for Definition"
+    assert retrieved_def.latex_proof is None, (
+        "Proof should be None in DB for Definition"
+    )
 
     # Test case 3: Update item type to one not requiring proof
-    retrieved_thm.item_type = ItemType.REMARK # Change to Remark
+    retrieved_thm.item_type = ItemType.REMARK  # Change to Remark
     retrieved_thm.latex_proof = "This should also be ignored now"
-    updated_thm = await kb_storage.save_kb_item(retrieved_thm, client=None, db_path=test_db)
+    updated_thm = await kb_storage.save_kb_item(
+        retrieved_thm, client=None, db_path=test_db
+    )
     retrieved_remark = kb_storage.get_kb_item_by_id(updated_thm.id, db_path=test_db)
     assert retrieved_remark.item_type == ItemType.REMARK
-    assert retrieved_remark.latex_proof is None, "Proof should become None after type change and save"
+    assert retrieved_remark.latex_proof is None, (
+        "Proof should become None after type change and save"
+    )

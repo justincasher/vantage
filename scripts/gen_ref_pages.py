@@ -54,14 +54,16 @@ for path in sorted(package_dir.rglob("*.py")):
     # Avoid generating pages for subdirectory package markers.
     if path.name == "__init__.py":
         print(f"Skipping subdirectory __init__.py: {path}")
-        continue # Move to the next file in the loop
+        continue  # Move to the next file in the loop
 
     # --- Generate Individual Module Page ---
     # Create the mkdocstrings identifier string (e.g., 'lean_automator.utils.helpers')
     doc_identifier = str(module_path).replace("/", ".")
     # Calculate the output Markdown file path relative to the MkDocs 'docs' directory
     # (e.g., 'reference/utils/helpers.md')
-    output_md_path = reference_output_dir / module_path.relative_to(package_dir.name).with_suffix(".md")
+    output_md_path = reference_output_dir / module_path.relative_to(
+        package_dir.name
+    ).with_suffix(".md")
 
     print(f"  Found module: {doc_identifier}")
     print(f"    Generating doc page: {output_md_path}")
@@ -88,15 +90,26 @@ print(f"Generating static index page: {index_path}")
 with mkdocs_gen_files.open(index_path, "w") as fd:
     # Write the title and the static introductory text for the index page
     print("# API Reference", file=fd)
-    print(f"\nWelcome to the API reference section for the `{package_dir.name}` package.", file=fd)
-    print("\nThis part of the documentation provides detailed information about the", file=fd)
+    print(
+        f"\nWelcome to the API reference section for the `{package_dir.name}` package.",
+        file=fd,
+    )
+    print(
+        "\nThis part of the documentation provides detailed information about the",
+        file=fd,
+    )
     print("package's modules, classes, functions, and methods.", file=fd)
-    print("\nPlease use the navigation menu on the left to explore the different modules.", file=fd)
+    print(
+        "\nPlease use the navigation menu on the left to explore the different modules.",
+        file=fd,
+    )
     # NOTE: Removed the loop that generated links to individual modules.
 
 # --- Set Edit Path for Index ---
 # Set the edit path for the index page itself to point to this script file.
 # This is useful if someone wants to modify the static intro text.
-mkdocs_gen_files.set_edit_path(index_path, "scripts/gen_ref_pages.py") # Assuming script is in scripts/
+mkdocs_gen_files.set_edit_path(
+    index_path, "scripts/gen_ref_pages.py"
+)  # Assuming script is in scripts/
 
 print("Index page generation complete.")

@@ -1,10 +1,71 @@
 [build-system]
-requires = ["setuptools>=61.0"] 
-build-backend = "setuptools.build_meta" 
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "vantage"  
-version = "0.1.0"       
-description = "A project for automating Lean formalization."
-readme = "README.md"     
-requires-python = ">=3.8" 
+name = "vantage"
+version = "0.1.0"
+description = "A project for automating Lean formalization and mathematical exploration."
+readme = "README.md"
+requires-python = ">=3.8"
+
+# -- Ruff Configuration --
+
+[tool.ruff]
+# Set the maximum line length
+line-length = 88
+
+# Set based on your `requires-python = ">=3.8"`
+target-version = "py38"
+
+# Tell Ruff to ONLY look in these directories/patterns.
+include = [
+    "src/**/*.py",       # All Python files in src
+    "tests/**/*.py",     # All Python files in tests
+    "scripts/**/*.py",   # All Python files in scripts
+    "*.py"               # Any Python files in the root directory
+]
+
+# Explicitly exclude directories. Ruff has defaults (like .git, .venv, build),
+# but we add specific ones from your project structure.
+exclude = [
+    ".venv",             # Virtual environment (Ruff default, but good to be explicit)
+    ".ruff_cache",       # Ruff cache (Ruff default)
+    "build",             # Build directory (Ruff default)
+    "dist",              # Distribution directory (Ruff default)
+    ".env",              # Environment variables file
+    ".env.example",
+    ".pytest_cache",
+    ".lake_cache",
+    "src/vantage.egg-info", # Build artifact
+    "site",              # Generated MkDocs site
+    "docs",              # Documentation source (mostly markdown, unless Python examples are added)
+    "vantage_lib",       # The Lean library subdirectory
+    "*.sqlite",          # SQLite database files
+    "*.db",              # Other database files
+    "*.json",            # JSON files (like model_costs.json) unless needed
+]
+
+# --- Linter specific settings ---
+[tool.ruff.lint]
+# Select the rules Ruff should check for.
+select = ["E", "W", "F", "I", "UP"]
+# E = pycodestyle errors
+# W = pycodestyle warnings
+# F = Pyflakes (undefined names, unused imports/variables)
+# I = isort (import sorting - crucial for replacing isort)
+# UP = pyupgrade (modernize syntax)
+
+# Ignore specific rules if needed (use sparingly).
+# Note: If you add 'ignore' later, it should also go under [tool.ruff.lint]
+# ignore = []
+
+# --- isort settings (which is part of linting) ---
+[tool.ruff.lint.isort]
+# Set based on your `project.name = "vantage"`
+known-first-party = ["vantage", "lean_automator"]
+
+# --- Formatter settings (if needed) ---
+# [tool.ruff.format]
+# Formatter options. Usually left empty to use Black-compatible defaults.
+# preview = true # Enable newer, potentially unstable formatting features

@@ -16,31 +16,44 @@ from typing import List, Optional, Tuple
 try:
     from lean_automator.config.loader import APP_CONFIG
 except ImportError:
-    warnings.warn("config_loader.APP_CONFIG not found. Default settings may be used.", ImportWarning)
-    APP_CONFIG = {} # Provide an empty dict as a fallback
+    warnings.warn(
+        "config_loader.APP_CONFIG not found. Default settings may be used.",
+        ImportWarning,
+    )
+    APP_CONFIG = {}  # Provide an empty dict as a fallback
 
 try:
     from lean_automator.llm.caller import GeminiClient
 except ImportError:
-    warnings.warn("llm_call.GeminiClient not found. Embedding generation/search will fail.", ImportWarning)
-    GeminiClient = None # type: ignore
+    warnings.warn(
+        "llm_call.GeminiClient not found. Embedding generation/search will fail.",
+        ImportWarning,
+    )
+    GeminiClient = None  # type: ignore
 
 try:
-    from lean_automator.kb.storage import KBItem, get_kb_item_by_name, get_all_items_with_embedding, DEFAULT_DB_PATH, EMBEDDING_DTYPE
+    from lean_automator.kb.storage import (
+        KBItem,
+        get_kb_item_by_name,
+        get_all_items_with_embedding,
+        DEFAULT_DB_PATH,
+        EMBEDDING_DTYPE,
+    )
 except ImportError:
-     warnings.warn("kb_storage not found. KB search functionality will be limited.", ImportWarning)
-     KBItem = None # type: ignore
-     get_kb_item_by_name = None # type: ignore
-     get_all_items_with_embedding = None # type: ignore
-     DEFAULT_DB_PATH = 'knowledge_base.sqlite'
-     EMBEDDING_DTYPE = np.float32
+    warnings.warn(
+        "kb_storage not found. KB search functionality will be limited.", ImportWarning
+    )
+    KBItem = None  # type: ignore
+    get_kb_item_by_name = None  # type: ignore
+    get_all_items_with_embedding = None  # type: ignore
+    DEFAULT_DB_PATH = "knowledge_base.sqlite"
+    EMBEDDING_DTYPE = np.float32
 
 # --- Embedding Generation ---
 
+
 async def generate_embedding(
-    text: str,
-    task_type: str,
-    client: GeminiClient
+    text: str, task_type: str, client: GeminiClient
 ) -> Optional[np.ndarray]:
     """Generates an embedding for the given text.
 
@@ -71,13 +84,17 @@ async def generate_embedding(
         if embeddings_list and embeddings_list[0]:
             return np.array(embeddings_list[0], dtype=EMBEDDING_DTYPE)
         else:
-            warnings.warn(f"Embedding generation returned empty result for task '{task_type}'.")
+            warnings.warn(
+                f"Embedding generation returned empty result for task '{task_type}'."
+            )
             return None
     except Exception as e:
         warnings.warn(f"Error generating embedding: {e}")
         return None
 
+
 # --- Vector Utilities ---
+
 
 def _bytes_to_vector(data: bytes) -> Optional[np.ndarray]:
     """Converts raw bytes back to a numpy float vector.
@@ -102,6 +119,7 @@ def _bytes_to_vector(data: bytes) -> Optional[np.ndarray]:
         warnings.warn(f"Error decoding embedding bytes: {e}")
         return None
 
+
 def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
     """Calculates the cosine similarity between two numpy vectors.
 
@@ -115,8 +133,10 @@ def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
         different shapes.
     """
     if v1.shape != v2.shape:
-        warnings.warn(f"Cannot compute cosine similarity for vectors with different shapes: {v1.shape} vs {v2.shape}")
-        return -1.0 # Indicate error/invalid comparison
+        warnings.warn(
+            f"Cannot compute cosine similarity for vectors with different shapes: {v1.shape} vs {v2.shape}"
+        )
+        return -1.0  # Indicate error/invalid comparison
 
     norm_v1 = np.linalg.norm(v1)
     norm_v2 = np.linalg.norm(v2)
@@ -136,14 +156,15 @@ def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
 
 # --- Semantic Search Function ---
 
+
 async def find_similar_items(
     query_text: str,
-    search_field: str, # 'nl' or 'latex'
+    search_field: str,  # 'nl' or 'latex'
     client: GeminiClient,
-    *, # Make subsequent arguments keyword-only
+    *,  # Make subsequent arguments keyword-only
     task_type_query: str = "RETRIEVAL_QUERY",
     db_path: Optional[str] = None,
-    top_n: int = 5
+    top_n: int = 5,
 ) -> List[Tuple[KBItem, float]]:
     """Finds KBItems with embeddings similar to the query text.
 
@@ -174,17 +195,17 @@ async def find_similar_items(
     Raises:
         ValueError: If `search_field` is not 'nl' or 'latex'.
     """
-    if search_field not in ['nl', 'latex']:
+    if search_field not in ["nl", "latex"]:
         raise ValueError("search_field must be 'nl' or 'latex'")
     if not client:
         warnings.warn("GeminiClient not available for embedding search.")
         return []
     if get_all_items_with_embedding is None or get_kb_item_by_name is None:
-         warnings.warn("kb_storage functions not available for search.")
-         return []
+        warnings.warn("kb_storage functions not available for search.")
+        return []
 
     embedding_column = f"embedding_{search_field}"
-    config_db_path = APP_CONFIG.get('database', {}).get('kb_db_path')
+    config_db_path = APP_CONFIG.get("database", {}).get("kb_db_path")
     effective_db_path = db_path or config_db_path or DEFAULT_DB_PATH
 
     # 1. Generate query embedding
@@ -195,17 +216,19 @@ async def find_similar_items(
 
     # 2. Fetch all existing document embeddings for the target field
     try:
-        all_embeddings_data = get_all_items_with_embedding(embedding_column, effective_db_path)
+        all_embeddings_data = get_all_items_with_embedding(
+            embedding_column, effective_db_path
+        )
     except Exception as e:
-         warnings.warn(f"Failed to retrieve embeddings from database: {e}")
-         return []
+        warnings.warn(f"Failed to retrieve embeddings from database: {e}")
+        return []
 
     if not all_embeddings_data:
         print(f"No items found with embeddings in field '{embedding_column}'.")
         return []
 
     # 3. Calculate similarities
-    similarities: List[Tuple[str, float]] = [] # Store (unique_name, score)
+    similarities: List[Tuple[str, float]] = []  # Store (unique_name, score)
     for item_id, unique_name, embedding_blob in all_embeddings_data:
         doc_vector = _bytes_to_vector(embedding_blob)
         if doc_vector is not None:
@@ -214,10 +237,13 @@ async def find_similar_items(
                 score = _cosine_similarity(query_vector, doc_vector)
                 similarities.append((unique_name, score))
             else:
-                 warnings.warn(f"Dimension mismatch for item '{unique_name}': Query={query_vector.shape}, Doc={doc_vector.shape}. Skipping.")
+                warnings.warn(
+                    f"Dimension mismatch for item '{unique_name}': Query={query_vector.shape}, Doc={doc_vector.shape}. Skipping."
+                )
         else:
-             warnings.warn(f"Could not decode embedding for item '{unique_name}' (ID: {item_id}). Skipping.")
-
+            warnings.warn(
+                f"Could not decode embedding for item '{unique_name}' (ID: {item_id}). Skipping."
+            )
 
     # 4. Sort by similarity (descending)
     similarities.sort(key=lambda x: x[1], reverse=True)
@@ -230,6 +256,8 @@ async def find_similar_items(
             top_results.append((item, score))
         else:
             # Should ideally not happen if unique_name came from the DB
-            warnings.warn(f"Could not retrieve KBItem '{unique_name}' after similarity search.")
+            warnings.warn(
+                f"Could not retrieve KBItem '{unique_name}' after similarity search."
+            )
 
     return top_results
