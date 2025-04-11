@@ -778,6 +778,9 @@ class LeanLspClient:
             logger.error(
                 f"{method} request timed out for {file_uri} at {line}:{character}"
             )
+            # Previous long line corrected below
+            msg = f"Returning None due to TimeoutError for get_goal({line}:{character})"
+            logger.debug(msg)
             return None  # Return None on timeout
         except ConnectionError:
             logger.error(f"Connection error during {method} request.")
