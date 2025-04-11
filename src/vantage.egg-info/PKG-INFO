@@ -1,8 +1,8 @@
 Metadata-Version: 2.4
 Name: vantage
 Version: 0.1.0
-Summary: A project for automating Lean formalization.
-Requires-Python: >=3.8
+Summary: A project for automating Lean formalization and mathematical exploration.
+Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Dynamic: license-file
