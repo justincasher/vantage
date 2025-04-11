@@ -3,6 +3,7 @@
 """Handles LLM interactions for Lean code generation.
 
 This module provides functions to:
+
 - Format prompts for Lean statement and proof generation.
 - Build context strings from dependencies.
 - Call the designated LLM client (e.g., GeminiClient).

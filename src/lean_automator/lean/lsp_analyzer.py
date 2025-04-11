@@ -8,15 +8,23 @@ verification.
 
 The primary function, `analyze_lean_failure`, orchestrates the interaction
 with the LSP server via the `LeanLspClient`:
+
 1. Pre-processes the input Lean code.
+
 2. Optionally runs a quick `lean` command check for early errors.
+
 3. Starts the `LeanLspClient` connected to `lean --server`.
+
 4. Sends the code to the server (`textDocument/didOpen`).
+
 5. Collects diagnostics (errors, warnings) reported by the server.
+
 6. Queries the proof goal state (`$/lean/plainGoal`) before relevant lines,
    marking goals as 'N/A' after the first detected error line.
+
 7. Assembles an annotated version of the processed code, interleaving
    goal states and diagnostics as comments.
+   
 8. Appends any original high-level build error messages.
 
 The resulting annotated code provides detailed, contextual feedback suitable

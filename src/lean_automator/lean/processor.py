@@ -9,10 +9,15 @@ module to generate the code based on LaTeX statements, informal proofs, and
 dependency context.
 
 The core logic, orchestrated by `generate_and_verify_lean`, involves:
+
 1. Checking prerequisites and dependencies (`_check_prerequisites_and_dependencies`).
+
 2. Generating a Lean statement signature (`_generate_statement_shell`).
+
 3. Generating and verifying Lean proof tactics (`_generate_and_verify_proof`).
+
 4. Updating the KBItem status and content throughout the process.
+
 5. Providing batch processing capabilities (`process_pending_lean_items`).
 """
 
