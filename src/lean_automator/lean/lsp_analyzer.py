@@ -1098,15 +1098,69 @@ async def analyze_lean_failure(
 
         return subprocess_env
 
+    # --- Helper function for preprocessing code ---
+    def _preprocess_lean_code(lean_code: str) -> str:
+        """Preprocesses Lean code by stripping comments and cleaning blank lines.
+
+        This function removes single-line Lean comments (lines starting with '--'
+        or containing '--' followed by anything to the end of the line). It then
+        removes any line that consists *only* of whitespace after its comment
+        (if any) was removed. Lines that were originally blank (or contained only
+        whitespace) are preserved, as are lines that still contain non-comment
+        content after stripping.
+
+        Args:
+            lean_code (str): The raw Lean code string potentially containing
+                single-line comments.
+
+        Returns:
+            str: The processed Lean code string with comments stripped according
+                to the specified rules and comment-induced blank lines removed.
+        """
+        original_lines = lean_code.splitlines()
+        processed_lines = []
+        # Regex to find and remove '--' comments from the end of the line
+        comment_pattern = re.compile(r"--.*$")
+        # Regex to check if a '--' comment marker exists anywhere on the line
+        # (This helps determine if a blank line resulted from stripping)
+        comment_search_pattern = re.compile(r"--")
+
+        for original_line in original_lines:
+            # Check if the original line contained a '--' comment marker.
+            had_comment = comment_search_pattern.search(original_line) is not None
+
+            # Strip the comment from the line.
+            stripped_line = comment_pattern.sub("", original_line)
+
+            # Check if the line is now effectively blank (contains only whitespace).
+            is_blank_after_strip = not stripped_line.strip()
+
+            # Determine if the line should be kept.
+            # We discard a line ONLY IF it originally had a comment AND it became blank after stripping.
+            # Otherwise, we keep it (either it had content, or it was originally blank).
+            if had_comment and is_blank_after_strip:
+                # This line had a comment and is now blank. Discard it.
+                # Optionally add logging here if needed:
+                # logger.debug(f"Preprocessing: Discarding line that became blank after comment removal: '{original_line}'")
+                continue # Skip appending this line
+            else:
+                # Keep the line (it might be stripped or the original).
+                processed_lines.append(stripped_line)
+
+        return "\n".join(processed_lines)
+
     # --- Pre-check using direct lean execution ---
     first_compiler_error_line = float('inf') # Use 1-based indexing from compiler
     temp_precheck_filename = "precheck_analysis_file.lean"
     temp_precheck_path = pathlib.Path(cwd) / temp_precheck_filename
-    stripped_code_for_precheck = strip_lean_comments(lean_code) # Use stripped code
+    # Use the new preprocessing function
+    logger.debug("Preprocessing Lean code for pre-check...")
+    processed_code = _preprocess_lean_code(lean_code)
 
     try:
-        logger.info(f"Pre-check: Writing code to {temp_precheck_path}")
-        temp_precheck_path.write_text(stripped_code_for_precheck, encoding='utf-8')
+        logger.info(f"Pre-check: Writing processed code to {temp_precheck_path}")
+        # Write the processed code for the pre-check
+        temp_precheck_path.write_text(processed_code, encoding='utf-8')
 
         logger.info(f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}")
         precheck_timeout = 25 # Slightly longer timeout
@@ -1125,14 +1179,17 @@ async def analyze_lean_failure(
 
         # Attempt to parse stdout for the first error line, as logs showed errors there
         error_pattern = re.compile(r".*?:(\d+):\d+:\s*error:")
-        output_lines = result.stdout.splitlines() # Read from stdout
+        # Use processed_code to determine line numbers if needed for error correlation later,
+        # but the compiler output refers to lines in the file written (which used processed_code)
+        output_lines = result.stdout.splitlines()
         logger.debug(f"Pre-check stdout ({len(output_lines)} lines): {result.stdout[:500]}...") # Log stdout snippet
 
         for line in output_lines: # Loop through stdout lines
             match = error_pattern.match(line)
             if match:
+                # Line number from compiler refers to lines in the processed code file
                 first_compiler_error_line = int(match.group(1))
-                logger.info(f"Pre-check: Found first compiler error on line: {first_compiler_error_line} (from stdout)")
+                logger.info(f"Pre-check: Found first compiler error on line: {first_compiler_error_line} (in processed code, from stdout)")
                 break # Stop after finding the first one
 
         if first_compiler_error_line == float('inf'):
@@ -1164,9 +1221,7 @@ async def analyze_lean_failure(
 
     # --- Initialize LSP Client ---
     client_timeout = max(timeout_seconds, 60)
-    # NOTE: LeanLspClient should ideally also use the _get_lean_path_env helper,
-    # assuming it's refactored out or the logic here is reliable.
-    # For now, the client uses its internal LEAN_PATH logic.
+    # NOTE: LeanLspClient internal LEAN_PATH logic should ideally match _get_lean_path_env.
     client = LeanLspClient(
         lean_executable_path,
         cwd,
@@ -1226,7 +1281,7 @@ async def analyze_lean_failure(
          start_char_disp = start_pos.get("character", -1) + 1
          end_pos = diag_range.get("end", {})
          # Use the line_idx passed in for start line, as LSP might report range across lines
-         start_line_disp = line_idx + 1
+         start_line_disp = line_idx + 1 # line_idx is 0-based index of the processed line
          end_line_disp = end_pos.get("line", -1) + 1
          end_char_disp = end_pos.get("character", -1) + 1
 
@@ -1245,12 +1300,12 @@ async def analyze_lean_failure(
         await client.start_server()
         await client.initialize()
 
-        # Use the *same* stripped code for LSP as for pre-check
-        stripped_code = strip_lean_comments(lean_code)
-        code_lines = stripped_code.splitlines()
+        # Base the analysis on the lines from the processed code
+        code_lines = processed_code.splitlines()
 
-        await client.did_open(temp_file_uri, "lean", 1, stripped_code)
-        logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri}")
+        # Send the processed code content to the LSP server
+        await client.did_open(temp_file_uri, "lean", 1, processed_code)
+        logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri} with processed code.")
 
         # --- Wait for initial diagnostics ---
         # Give Lean LSP time to process the file after opening.
@@ -1262,6 +1317,7 @@ async def analyze_lean_failure(
         logger.info(f"Collected {len(collected_diagnostics)} initial diagnostics.")
 
         # --- Determine effective error line ---
+        # Diagnostics line numbers will refer to the processed code lines
         for diag in collected_diagnostics:
              if diag.get("severity") == 1: # 1 is Error severity in LSP
                  line_idx = diag.get("range", {}).get("start", {}).get("line", float('inf'))
@@ -1273,7 +1329,7 @@ async def analyze_lean_failure(
                      logger.warning(f"Could not parse line number from diagnostic start: {line_idx}")
 
 
-        # Combine pre-check (1-based) and LSP error (0-based)
+        # Combine pre-check (1-based, refers to processed lines) and LSP error (0-based, refers to processed lines)
         # Ensure comparison is between numbers (float('inf') handles cases where one is not found)
         effective_error_line_idx = min(float(first_compiler_error_line) - 1, first_lsp_error_line_idx)
 
@@ -1281,7 +1337,7 @@ async def analyze_lean_failure(
              # Convert back to int for display if not infinity
              effective_error_line_idx = int(effective_error_line_idx)
              logger.info(f"Effective first error detected near line index: {effective_error_line_idx} "
-                         f"(Line number {effective_error_line_idx + 1})")
+                         f"(Line number {effective_error_line_idx + 1} in processed code)")
         else:
              logger.info("No errors detected from pre-check or initial LSP diagnostics.")
              effective_error_line_idx = -1 # Use -1 to indicate no error found, easier than inf
@@ -1289,12 +1345,14 @@ async def analyze_lean_failure(
         # --- Goal fetching loop with N/A marking ---
         logger.info("Starting line-by-line goal annotation (marking N/A after error)...")
         goal_lines_buffer: List[Optional[str]] = [] # Store goals or None
-        code_lines_buffer: List[str] = code_lines # Keep original code lines
+        # Use the processed code lines for iteration
+        code_lines_buffer: List[str] = code_lines
 
         for i, line_content in enumerate(code_lines_buffer):
             goal_comment_line: Optional[str] = None # Default to no goal comment
 
-            # Only process goals for non-empty lines AND before the effective error
+            # Only process goals for non-empty lines (comment-induced blank lines are already removed)
+            # This check still handles originally blank lines.
             if line_content.strip():
                 if effective_error_line_idx != -1 and i >= effective_error_line_idx:
                     # Error detected earlier, mark goal as N/A
@@ -1305,37 +1363,38 @@ async def analyze_lean_failure(
                     # No error detected yet, try to fetch the goal
                     current_goal_str = "Error: Could not retrieve goal state" # Default msg
                     try:
+                        # Line number 'i' refers to the index in processed_code
                         goal_result = await asyncio.wait_for(
                             client.get_goal(temp_file_uri, line=i, character=0),
                             timeout=timeout_seconds,
                         )
-                        logger.debug(f"Raw goal_result before line {i+1}: {goal_result!r}")
+                        logger.debug(f"Raw goal_result before line {i+1} (processed): {goal_result!r}")
                         parsed_goal = _parse_goal_result(goal_result)
                         _, single_line_goal = _clean_goal_string(parsed_goal)
                         goal_comment_line = f"-- Goal: {single_line_goal}"
 
                     except asyncio.TimeoutError:
-                        logger.error(f"Timeout ({timeout_seconds}s) retrieving goal before line {i + 1}")
+                        logger.error(f"Timeout ({timeout_seconds}s) retrieving goal before line {i + 1} (processed)")
                         goal_comment_line = "-- Goal: Error: Timeout retrieving goal state"
                     except LspResponseError as goal_lsp_e:
-                         logger.warning(f"LSP error retrieving goal before line {i + 1}: {goal_lsp_e}")
+                         logger.warning(f"LSP error retrieving goal before line {i + 1} (processed): {goal_lsp_e}")
                          # Provide a slightly more informative error message
                          goal_comment_line = f"-- Goal: Error retrieving goal (LSP: {goal_lsp_e.code})"
                     except ConnectionError as goal_conn_e:
-                        logger.error(f"Connection error retrieving goal before line {i+1}: {goal_conn_e}")
+                        logger.error(f"Connection error retrieving goal before line {i+1} (processed): {goal_conn_e}")
                         goal_comment_line = "-- Goal: Error: Connection failed during goal retrieval"
                         # Maybe re-raise or break if connection is lost? For now, just mark goal.
                     except Exception as goal_e:
-                        logger.error(f"Error retrieving goal state before line {i + 1}: {goal_e}", exc_info=True) # Log full trace for unexpected
+                        logger.error(f"Error retrieving goal state before line {i + 1} (processed): {goal_e}", exc_info=True) # Log full trace for unexpected
                         goal_comment_line = f"-- Goal: Error retrieving goal: {type(goal_e).__name__}"
 
-            if i == 2: # Index corresponding to the 'theorem' line
-                logger.debug(f"State for line index 2: line_content='{line_content}', effective_error_line_idx={effective_error_line_idx}")
-                # Add logs for the variables calculated *inside* the else block if needed
-                # logger.debug(f"State for line index 2 (else block): goal_result={goal_result}, parsed_goal='{parsed_goal}', single_line_goal='{single_line_goal}'") # If needed
-                logger.debug(f"State for line index 2: Calculated goal_comment_line='{goal_comment_line}'")
+            # Keep debug log related to original request (line index 2) if useful
+            if i == 2: # Index corresponding to the 'p q : Prop' line in the *original* test input's structure
+                       # Adjust index if preprocessing changes line numbers significantly
+                logger.debug(f"State check at index 2 (processed code line: '{line_content}'): effective_error_line_idx={effective_error_line_idx}")
+                logger.debug(f"State check at index 2: Calculated goal_comment_line='{goal_comment_line}'")
 
-            goal_lines_buffer.append(goal_comment_line) # Append goal/N/A/None
+            goal_lines_buffer.append(goal_comment_line) # Append goal/N/A/Error/None
 
         # --- Collect final diagnostics and process ---
         diagnostic_collection_timeout = 5.0
@@ -1362,10 +1421,11 @@ async def analyze_lean_failure(
                 if diag_sig in seen_diags: continue
                 seen_diags.add(diag_sig)
 
-                # Get the primary line index for mapping
+                # Get the primary line index for mapping (refers to processed lines)
                 start_line_idx = diag.get("range", {}).get("start", {}).get("line", -1)
 
                 if start_line_idx != -1:
+                    # Pass the correct line index from the processed code
                     diag_log_line = _format_diagnostic_line(diag, start_line_idx)
                     diagnostics_by_line[start_line_idx].append(diag_log_line)
                     formatted_diags_count += 1
@@ -1376,20 +1436,22 @@ async def analyze_lean_failure(
         logger.debug(f"Diagnostics by line map: {diagnostics_by_line}")
         logger.info("Assembling final annotated output...")
         final_output_lines = []
+        # Iterate using the processed code lines buffer
         for i, code_line in enumerate(code_lines_buffer):
             # 1. Add goal comment from buffer (if one exists for this line)
             goal_comment = goal_lines_buffer[i]
-            if goal_comment is not None:
+            if goal_comment is not None and goal_comment != "-- Goal: No goal state reported":
                 final_output_lines.append(goal_comment)
 
             # 2. Add diagnostics reported for this line index *before* the code
+            # The keys in diagnostics_by_line refer to indices in processed code
             if i in diagnostics_by_line:
                 # Add indentation for readability
                 indented_diags = ["  " + diag for diag in diagnostics_by_line[i]]
                 final_output_lines.extend(indented_diags)
                 logger.debug(f"Inserted {len(indented_diags)} diagnostics before line index {i}")
 
-            # 3. Add the original code line
+            # 3. Add the processed code line
             final_output_lines.append(code_line)
 
         annotated_lines = final_output_lines # Use the newly assembled list
