@@ -1,1 +1,0 @@
-def simpleDef : Nat := 5
