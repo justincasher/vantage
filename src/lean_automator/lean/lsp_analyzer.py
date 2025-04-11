@@ -39,7 +39,7 @@ import pathlib
 import re
 import subprocess
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # --- Logging Configuration ---
 # Configure logging level using the LOGLEVEL environment variable (common practice).
@@ -1010,14 +1010,13 @@ async def analyze_lean_failure(
     lean_executable_path: str,
     cwd: str,
     shared_lib_path: Optional[pathlib.Path],
-    timeout_seconds: int = DEFAULT_LSP_TIMEOUT,  # Used for goal requests
+    timeout_seconds: int = DEFAULT_LSP_TIMEOUT,
     fallback_error: str = "LSP analysis failed.",
 ) -> str:
     """
-    Analyzes failing Lean code using LSP. It waits for initial diagnostics,
-    then annotates the code with single-line goal states line-by-line
-    (skipping empty lines), and finally appends sections for both reported LSP
-    diagnostics and the original build failure message.
+    Analyzes failing Lean code using LSP and direct compilation check.
+    Annotates the code with goal states (or 'N/A' after first detected error),
+    inline LSP diagnostics, and the original build failure message.
 
     Args:
         lean_code (str): The Lean code string to analyze.
@@ -1029,155 +1028,329 @@ async def analyze_lean_failure(
         fallback_error (str): Error message (typically lake build output) to include.
 
     Returns:
-        str: Annotated Lean code with goals, LSP diagnostics, and the build error.
+        str: Annotated Lean code with goals/N/A, LSP diagnostics, and the build error.
     """
-    # Use a longer overall timeout for the client's internal waits if needed
-    client_timeout = max(
-        timeout_seconds, 60
-    )  # Give client reasonable time for internal waits
+
+    # --- Helper function for LEAN_PATH (to avoid duplication) ---
+    def _get_lean_path_env(
+        exec_path: str,
+        project_cwd: str,
+        lib_path: Optional[pathlib.Path]
+    ) -> Dict[str, str]:
+        """Constructs the environment dictionary with LEAN_PATH set."""
+        subprocess_env = os.environ.copy()
+        lean_paths: List[str] = []
+
+        # 1. Detect Stdlib Path (synchronous call before async process)
+        try:
+            lean_path_proc = subprocess.run(
+                [exec_path, "--print-libdir"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+                encoding="utf-8",
+            )
+            path_candidate = lean_path_proc.stdout.strip()
+            if path_candidate and pathlib.Path(path_candidate).is_dir():
+                std_lib_path = path_candidate
+                logger.debug(f"Path Env: Detected Lean stdlib path: {std_lib_path}")
+                lean_paths.append(std_lib_path)
+            else:
+                logger.warning(f"Path Env: --print-libdir invalid output: '{path_candidate}'")
+        except Exception as e:
+            logger.warning(f"Path Env: Failed to detect Lean stdlib path: {e}")
+
+        # 2. Add Shared Library Build Path
+        if lib_path and lib_path.is_dir():
+            shared_lib_build_path = lib_path / ".lake" / "build" / "lib"
+            if shared_lib_build_path.is_dir():
+                abs_path = str(shared_lib_build_path.resolve())
+                logger.debug(f"Path Env: Adding shared lib build path: {abs_path}")
+                lean_paths.append(abs_path)
+            else:
+                 logger.warning(f"Path Env: Shared lib path provided but build dir not found: {shared_lib_build_path}")
+        elif lib_path:
+             logger.warning(f"Path Env: Provided shared_lib_path is not a valid directory: {lib_path}")
+
+
+        # 3. Add Temporary Project's *Own* Build Path
+        temp_project_build_path = pathlib.Path(project_cwd) / ".lake" / "build" / "lib"
+        abs_temp_path = str(temp_project_build_path.resolve())
+        logger.debug(f"Path Env: Adding temp project's own build path: {abs_temp_path}")
+        lean_paths.append(abs_temp_path) # Add even if it doesn't exist yet
+
+        # 4. Combine with existing LEAN_PATH
+        existing_lean_path = subprocess_env.get("LEAN_PATH")
+        if existing_lean_path:
+             if existing_lean_path not in lean_paths: # Avoid adding if already covered
+                 logger.debug(f"Path Env: Adding existing LEAN_PATH: {existing_lean_path}")
+                 lean_paths.append(existing_lean_path)
+
+        # Set the final LEAN_PATH
+        if lean_paths:
+            unique_lean_paths = list(dict.fromkeys(lean_paths)) # Order-preserving unique
+            final_lean_path = os.pathsep.join(unique_lean_paths)
+            subprocess_env["LEAN_PATH"] = final_lean_path
+            logger.info(f"Path Env: Setting LEAN_PATH: {final_lean_path}")
+        else:
+            logger.warning("Path Env: Could not determine any paths for LEAN_PATH.")
+
+        return subprocess_env
+
+    # --- Pre-check using direct lean execution ---
+    first_compiler_error_line = float('inf') # Use 1-based indexing from compiler
+    temp_precheck_filename = "precheck_analysis_file.lean"
+    temp_precheck_path = pathlib.Path(cwd) / temp_precheck_filename
+    stripped_code_for_precheck = strip_lean_comments(lean_code) # Use stripped code
+
+    try:
+        logger.info(f"Pre-check: Writing code to {temp_precheck_path}")
+        temp_precheck_path.write_text(stripped_code_for_precheck, encoding='utf-8')
+
+        logger.info(f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}")
+        precheck_timeout = 25 # Slightly longer timeout
+        precheck_env = _get_lean_path_env(lean_executable_path, cwd, shared_lib_path)
+
+        result = subprocess.run(
+            [lean_executable_path, temp_precheck_filename],
+            capture_output=True,
+            text=True, # Get text output
+            cwd=cwd,
+            timeout=precheck_timeout,
+            encoding='utf-8', # Specify encoding
+            errors='replace', # Handle potential decoding errors
+            env=precheck_env
+        )
+
+        # Attempt to parse stdout for the first error line, as logs showed errors there
+        error_pattern = re.compile(r".*?:(\d+):\d+:\s*error:")
+        output_lines = result.stdout.splitlines() # Read from stdout
+        logger.debug(f"Pre-check stdout ({len(output_lines)} lines): {result.stdout[:500]}...") # Log stdout snippet
+
+        for line in output_lines: # Loop through stdout lines
+            match = error_pattern.match(line)
+            if match:
+                first_compiler_error_line = int(match.group(1))
+                logger.info(f"Pre-check: Found first compiler error on line: {first_compiler_error_line} (from stdout)")
+                break # Stop after finding the first one
+
+        if first_compiler_error_line == float('inf'):
+             # Check stderr as a fallback or just log it wasn't found in stdout
+             logger.info("Pre-check: No errors found matching pattern in compiler stdout.")
+             # Optionally parse stderr here too if errors might appear in either place
+             # For now, just log stderr if it exists
+             if result.stderr:
+                  logger.debug(f"Pre-check stderr content: {result.stderr[:500]}...")
+
+
+    except FileNotFoundError:
+         logger.error(f"Pre-check Failed: Lean executable not found at '{lean_executable_path}'.")
+         # Decide if this is fatal or if LSP analysis should proceed anyway
+         # For now, we'll let LSP proceed, first_compiler_error_line remains 'inf'
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Pre-check: Timed out after {precheck_timeout}s.")
+    except Exception as precheck_e:
+        # Catch other potential errors like permission issues, etc.
+        logger.warning(f"Pre-check: Failed with unexpected error: {precheck_e}", exc_info=True)
+    finally:
+        # Clean up the temporary file used for pre-check
+        if temp_precheck_path.exists():
+            try:
+                temp_precheck_path.unlink()
+                logger.debug(f"Pre-check: Cleaned up {temp_precheck_path}")
+            except OSError as e:
+                logger.warning(f"Pre-check: Could not delete temp file {temp_precheck_path}: {e}")
+
+    # --- Initialize LSP Client ---
+    client_timeout = max(timeout_seconds, 60)
+    # NOTE: LeanLspClient should ideally also use the _get_lean_path_env helper,
+    # assuming it's refactored out or the logic here is reliable.
+    # For now, the client uses its internal LEAN_PATH logic.
     client = LeanLspClient(
         lean_executable_path,
         cwd,
-        timeout=client_timeout,  # Use longer timeout for client internals
+        timeout=client_timeout,
         shared_lib_path=shared_lib_path,
     )
-    annotated_lines: List[str] = []
-    analysis_succeeded = False  # Track if the main analysis logic completes
-    collected_diagnostics: List[Dict[str, Any]] = []  # Store all diagnostics here
-    diagnostics_by_line: Dict[int, List[str]] = defaultdict(
-        list
-    )  # For inline diagnostics
 
-    # Use a consistent temporary filename within the CWD for the URI
+    # --- Analysis Variables ---
+    analysis_succeeded = False
+    collected_diagnostics: List[Dict[str, Any]] = []
+    diagnostics_by_line: Dict[int, List[str]] = defaultdict(list)
+    first_lsp_error_line_idx = float('inf') # Use 0-based indexing for LSP
+    effective_error_line_idx = float('inf') # 0-based index
+
+    # --- Helper functions for goal/diagnostic processing ---
+    def _parse_goal_result(goal_result: Optional[Any]) -> str:
+        """Parses the LSP goal result into a string."""
+        if goal_result and isinstance(goal_result, dict):
+            if "rendered" in goal_result: return goal_result["rendered"].strip()
+            if "plainGoal" in goal_result: return goal_result["plainGoal"].strip()
+            if ("goals" in goal_result and isinstance(goal_result["goals"], list)
+                    and goal_result["goals"]):
+                # Format multiple goals concisely
+                return (f"{len(goal_result['goals'])} goal(s): " +
+                        " | ".join([
+                            g.get("rendered", str(g)).replace("\n", " ")
+                            for g in goal_result['goals']
+                        ]))
+            return f"Goal state fmt unknown: {str(goal_result)[:300]}"
+        elif isinstance(goal_result, str):
+            return goal_result.strip()
+        elif goal_result is not None:
+            return f"Unexpected goal result type: {str(goal_result)[:100]}"
+        else:
+            # This case hit if client.get_goal returned None (e.g., timeout, error)
+            # The outer try/except in the loop handles setting specific error messages.
+            # Returning this implies the request succeeded but returned null/empty.
+            return "No goal state reported" # Or potentially ""
+
+    def _clean_goal_string(goal_str: str) -> Tuple[str, str]:
+        """Cleans goal string and creates single-line version."""
+        cleaned = goal_str.strip()
+        if cleaned.startswith("```lean"): cleaned = cleaned.removeprefix("```lean").strip()
+        if cleaned.endswith("```"): cleaned = cleaned.removesuffix("```").strip()
+        if not cleaned or "no goals" in cleaned.lower():
+            cleaned = "goals accomplished"
+        single_line = cleaned.replace("\n", "; ")
+        return cleaned, single_line
+
+    def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> str:
+         """Formats a single diagnostic into a comment line."""
+         severity_map = {1: "Error", 2: "Warning", 3: "Info", 4: "Hint"}
+         severity = severity_map.get(diag.get("severity", 0), "Unknown")
+         message = diag.get("message", "Unknown Lean diagnostic.")
+         diag_range = diag.get("range", {})
+         start_pos = diag_range.get("start", {})
+         start_char_disp = start_pos.get("character", -1) + 1
+         end_pos = diag_range.get("end", {})
+         # Use the line_idx passed in for start line, as LSP might report range across lines
+         start_line_disp = line_idx + 1
+         end_line_disp = end_pos.get("line", -1) + 1
+         end_char_disp = end_pos.get("character", -1) + 1
+
+         # Format the diagnostic message
+         return (f"-- {severity}: (Reported range "
+                 f"L{start_line_disp}:{start_char_disp}"
+                 f"-L{end_line_disp}:{end_char_disp}): {message}")
+
+    # --- File URI ---
     temp_filename = "temp_analysis_file.lean"
     temp_file_path = pathlib.Path(cwd) / temp_filename
     temp_file_uri = temp_file_path.as_uri()
 
     try:
+        # --- Start LSP and Open Document ---
         await client.start_server()
         await client.initialize()
 
+        # Use the *same* stripped code for LSP as for pre-check
         stripped_code = strip_lean_comments(lean_code)
         code_lines = stripped_code.splitlines()
 
-        # Use the stripped code for analysis with LSP
         await client.did_open(temp_file_uri, "lean", 1, stripped_code)
         logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri}")
 
-        # --- Step 2: Annotate with Goals and Inline Diagnostics ---
-        logger.info("Starting line-by-line goal annotation and diagnostic insertion...")
-        for i, line_content in enumerate(code_lines):
-            # Query goal ONLY if the line has content
+        # --- Wait for initial diagnostics ---
+        # Give Lean LSP time to process the file after opening.
+        initial_wait_time = 5.0 # Adjust based on typical project size/complexity
+        logger.info(f"Waiting {initial_wait_time}s for initial diagnostics...")
+        await asyncio.sleep(initial_wait_time)
+        # Try to collect diagnostics generated so far
+        collected_diagnostics = await client.get_diagnostics(timeout=1.0)
+        logger.info(f"Collected {len(collected_diagnostics)} initial diagnostics.")
+
+        # --- Determine effective error line ---
+        for diag in collected_diagnostics:
+             if diag.get("severity") == 1: # 1 is Error severity in LSP
+                 line_idx = diag.get("range", {}).get("start", {}).get("line", float('inf'))
+                 # Ensure line_idx is treated as float for min() comparison initially
+                 try:
+                     current_min_idx = float(line_idx)
+                     first_lsp_error_line_idx = min(first_lsp_error_line_idx, current_min_idx)
+                 except (ValueError, TypeError):
+                     logger.warning(f"Could not parse line number from diagnostic start: {line_idx}")
+
+
+        # Combine pre-check (1-based) and LSP error (0-based)
+        # Ensure comparison is between numbers (float('inf') handles cases where one is not found)
+        effective_error_line_idx = min(float(first_compiler_error_line) - 1, first_lsp_error_line_idx)
+
+        if effective_error_line_idx != float('inf'):
+             # Convert back to int for display if not infinity
+             effective_error_line_idx = int(effective_error_line_idx)
+             logger.info(f"Effective first error detected near line index: {effective_error_line_idx} "
+                         f"(Line number {effective_error_line_idx + 1})")
+        else:
+             logger.info("No errors detected from pre-check or initial LSP diagnostics.")
+             effective_error_line_idx = -1 # Use -1 to indicate no error found, easier than inf
+
+        # --- Goal fetching loop with N/A marking ---
+        logger.info("Starting line-by-line goal annotation (marking N/A after error)...")
+        goal_lines_buffer: List[Optional[str]] = [] # Store goals or None
+        code_lines_buffer: List[str] = code_lines # Keep original code lines
+
+        for i, line_content in enumerate(code_lines_buffer):
+            goal_comment_line: Optional[str] = None # Default to no goal comment
+
+            # Only process goals for non-empty lines AND before the effective error
             if line_content.strip():
-                current_goal_str = "Error: Could not retrieve goal state"  # Default msg
-                try:
-                    goal_result = await asyncio.wait_for(
-                        client.get_goal(temp_file_uri, line=i, character=0),
-                        timeout=timeout_seconds,
-                    )
-
-                    logger.debug(f"Raw goal_result before line {i+1} (index {i}): {goal_result!r}")
-
-                    # --- Parse Goal Result (same as previous version) ---
-                    if goal_result and isinstance(goal_result, dict):
-                        if "rendered" in goal_result:
-                            current_goal_str = goal_result["rendered"].strip()
-                        elif "plainGoal" in goal_result:
-                            current_goal_str = goal_result["plainGoal"].strip()
-                        elif (
-                            "goals" in goal_result
-                            and isinstance(goal_result["goals"], list)
-                            and goal_result["goals"]
-                        ):
-                            current_goal_str = (
-                                f"{len(goal_result['goals'])} goal(s): "
-                                + " | ".join(
-                                    [
-                                        g.get("rendered", str(g)).replace("\n", " ")
-                                        for g in goal_result["goals"]
-                                    ]
-                                )
-                            )  # Join multiple goals inline
-                        else:
-                            current_goal_str = (
-                                f"Goal state fmt unknown: {str(goal_result)[:300]}"
-                            )
-                    elif isinstance(goal_result, str):
-                        current_goal_str = goal_result.strip()
-                    elif goal_result is not None:
-                        current_goal_str = (
-                            f"Unexpected goal result type: {str(goal_result)[:100]}"
+                if effective_error_line_idx != -1 and i >= effective_error_line_idx:
+                    # Error detected earlier, mark goal as N/A
+                    goal_comment_line = f"-- Goal: N/A (error detected near line {effective_error_line_idx + 1})"
+                    # Log moved inside this block
+                    logger.debug(f"Marking goal N/A for code line index {i}")
+                else:
+                    # No error detected yet, try to fetch the goal
+                    current_goal_str = "Error: Could not retrieve goal state" # Default msg
+                    try:
+                        goal_result = await asyncio.wait_for(
+                            client.get_goal(temp_file_uri, line=i, character=0),
+                            timeout=timeout_seconds,
                         )
-                    else:
-                        # Log why we are hitting this case
-                        if goal_result is None:
-                            logger.debug(f"Goal result for line {i+1} was None.")
-                        else:
-                            logger.debug(f"Goal result for line {i+1} was not None or dict: type={type(goal_result)}")
-                        current_goal_str = "No goal state reported" # Keep default msg for now
+                        logger.debug(f"Raw goal_result before line {i+1}: {goal_result!r}")
+                        parsed_goal = _parse_goal_result(goal_result)
+                        _, single_line_goal = _clean_goal_string(parsed_goal)
+                        goal_comment_line = f"-- Goal: {single_line_goal}"
 
-                    if (
-                        not current_goal_str.strip()
-                        or "no goals" in current_goal_str.lower()
-                    ):
-                        current_goal_str = "goals accomplished"
+                    except asyncio.TimeoutError:
+                        logger.error(f"Timeout ({timeout_seconds}s) retrieving goal before line {i + 1}")
+                        goal_comment_line = "-- Goal: Error: Timeout retrieving goal state"
+                    except LspResponseError as goal_lsp_e:
+                         logger.warning(f"LSP error retrieving goal before line {i + 1}: {goal_lsp_e}")
+                         # Provide a slightly more informative error message
+                         goal_comment_line = f"-- Goal: Error retrieving goal (LSP: {goal_lsp_e.code})"
+                    except ConnectionError as goal_conn_e:
+                        logger.error(f"Connection error retrieving goal before line {i+1}: {goal_conn_e}")
+                        goal_comment_line = "-- Goal: Error: Connection failed during goal retrieval"
+                        # Maybe re-raise or break if connection is lost? For now, just mark goal.
+                    except Exception as goal_e:
+                        logger.error(f"Error retrieving goal state before line {i + 1}: {goal_e}", exc_info=True) # Log full trace for unexpected
+                        goal_comment_line = f"-- Goal: Error retrieving goal: {type(goal_e).__name__}"
 
-                except asyncio.TimeoutError:
-                    logger.error(
-                        f"Timeout ({timeout_seconds}s) retrieving goal state before "
-                        f"line {i + 1}"
-                    )
-                    current_goal_str = "Error: Timeout retrieving goal state"
-                except Exception as goal_e:
-                    logger.error(
-                        f"Error retrieving goal state before line {i + 1}: {goal_e}",
-                        exc_info=True,
-                    )
-                    current_goal_str = f"Error retrieving goal: {goal_e}"
+            if i == 2: # Index corresponding to the 'theorem' line
+                logger.debug(f"State for line index 2: line_content='{line_content}', effective_error_line_idx={effective_error_line_idx}")
+                # Add logs for the variables calculated *inside* the else block if needed
+                # logger.debug(f"State for line index 2 (else block): goal_result={goal_result}, parsed_goal='{parsed_goal}', single_line_goal='{single_line_goal}'") # If needed
+                logger.debug(f"State for line index 2: Calculated goal_comment_line='{goal_comment_line}'")
 
-                # Remove markdown fences and strip whitespace
-                cleaned_goal_str = current_goal_str.strip()
-                if cleaned_goal_str.startswith("```lean"):
-                    cleaned_goal_str = cleaned_goal_str.removeprefix("```lean").strip()
-                if cleaned_goal_str.endswith("```"):
-                    cleaned_goal_str = cleaned_goal_str.removesuffix("```").strip()
+            goal_lines_buffer.append(goal_comment_line) # Append goal/N/A/None
 
-                # Replace newlines with "; " for single-line output
-                single_line_goal = cleaned_goal_str.replace("\n", "; ")
-
-                # Add the single-line goal comment
-                goal_comment_line = f"-- Goal: {single_line_goal}"
-                annotated_lines.append(goal_comment_line)
-
-                # Always append the original code line content
-                annotated_lines.append(line_content)
-
-        # --- Step 3: Collect All Available Diagnostics ---
-        # Use a shorter timeout here as we expect diagnostics might already be queued
+        # --- Collect final diagnostics and process ---
         diagnostic_collection_timeout = 5.0
-        logger.info(
-            "Collecting all available diagnostics "
-            f"(timeout={diagnostic_collection_timeout}s)..."
-        )
-        collected_diagnostics = await client.get_diagnostics(
-            timeout=diagnostic_collection_timeout
-        )
-        logger.info(f"Collected {len(collected_diagnostics)} diagnostics initially.")
-        if collected_diagnostics:
-            logger.debug(
-                "Collected diagnostics sample (first): "
-                f"{str(collected_diagnostics[0])[:300]}..."
-            )
+        logger.info(f"Collecting final diagnostics (timeout={diagnostic_collection_timeout}s)...")
+        # Fetch diagnostics again in case more arrived during goal fetching
+        more_diagnostics = await client.get_diagnostics(timeout=diagnostic_collection_timeout)
+        collected_diagnostics.extend(more_diagnostics)
+        logger.info(f"Total collected diagnostics: {len(collected_diagnostics)}")
 
-            # --- Pre-process diagnostics for inline insertion ---
-            logger.debug(
-                f"Preprocessing {len(collected_diagnostics)} diagnostics for "
-                "inline reporting..."
-            )
+        if collected_diagnostics:
+            logger.debug(f"Processing {len(collected_diagnostics)} total diagnostics for inline reporting...")
             formatted_diags_count = 0
             seen_diags = set()
             for diag in collected_diagnostics:
-                # Create a unique tuple signature for the diagnostic
+                # De-duplicate diagnostics (same as original code)
                 diag_sig = (
                     diag.get("severity"),
                     diag.get("range", {}).get("start", {}).get("line"),
@@ -1186,127 +1359,106 @@ async def analyze_lean_failure(
                     diag.get("range", {}).get("end", {}).get("character"),
                     diag.get("message"),
                 )
-                if diag_sig in seen_diags:
-                    continue  # Skip duplicate
+                if diag_sig in seen_diags: continue
                 seen_diags.add(diag_sig)
 
-                severity_map = {1: "Error", 2: "Warning", 3: "Info", 4: "Hint"}
-                severity = severity_map.get(diag.get("severity", 0), "Unknown")
-                message = diag.get("message", "Unknown Lean diagnostic.")
-                diag_range = diag.get("range", {})
-                start_pos = diag_range.get("start", {})
-                start_line_idx = start_pos.get(
-                    "line", -1
-                )  # 0-based index for dictionary key
+                # Get the primary line index for mapping
+                start_line_idx = diag.get("range", {}).get("start", {}).get("line", -1)
 
                 if start_line_idx != -1:
-                    # Use 1-based indexing for user-friendly output string
-                    start_line_disp = start_line_idx + 1
-                    start_char_disp = start_pos.get("character", -1) + 1
-                    end_pos = diag_range.get("end", {})
-                    end_line_disp = end_pos.get("line", -1) + 1
-                    end_char_disp = end_pos.get("character", -1) + 1
-
-                    # Format the diagnostic message
-                    diag_log_line = (
-                        f"-- {severity}: "
-                        f"(Reported for L{start_line_disp}:{start_char_disp}"
-                        f"-L{end_line_disp}:{end_char_disp}): {message}"
-                    )
+                    diag_log_line = _format_diagnostic_line(diag, start_line_idx)
                     diagnostics_by_line[start_line_idx].append(diag_log_line)
                     formatted_diags_count += 1
-            logger.info(
-                f"Processed {formatted_diags_count} unique diagnostics into line map."
-            )
+            logger.info(f"Processed {formatted_diags_count} unique diagnostics into line map.")
 
-            # --- Step 4: Insert Diagnostics into Annotated Lines ---
-            logger.info("Inserting processed diagnostics into annotated output...")
-            final_output_lines_with_diags = []
-            original_line_idx = -1 # Track the index of the original code line
+        # --- Assemble final output ---
+        logger.debug(f"Goal lines buffer before assembly: {goal_lines_buffer}")
+        logger.debug(f"Diagnostics by line map: {diagnostics_by_line}")
+        logger.info("Assembling final annotated output...")
+        final_output_lines = []
+        for i, code_line in enumerate(code_lines_buffer):
+            # 1. Add goal comment from buffer (if one exists for this line)
+            goal_comment = goal_lines_buffer[i]
+            if goal_comment is not None:
+                final_output_lines.append(goal_comment)
 
-            # Iterate through the lines already annotated with goals
-            for annotated_line in annotated_lines:
-                # Check if the current line is NOT a goal comment
-                # Goal lines added previously start with "-- Goal:"
-                is_code_line = not annotated_line.startswith("-- Goal:")
+            # 2. Add diagnostics reported for this line index *before* the code
+            if i in diagnostics_by_line:
+                # Add indentation for readability
+                indented_diags = ["  " + diag for diag in diagnostics_by_line[i]]
+                final_output_lines.extend(indented_diags)
+                logger.debug(f"Inserted {len(indented_diags)} diagnostics before line index {i}")
 
-                if is_code_line:
-                    original_line_idx += 1 # Increment index only for original code lines
-                    # Check if we have diagnostics reported for this original line index
-                    if original_line_idx in diagnostics_by_line:
-                        # Insert the diagnostics *before* appending the code line
-                        # Add indentation to diagnostics for readability
-                        indented_diags = ["  " + diag for diag in diagnostics_by_line[original_line_idx]]
-                        final_output_lines_with_diags.extend(indented_diags)
-                        logger.debug(f"Inserted {len(indented_diags)} diagnostics before line index {original_line_idx}")
+            # 3. Add the original code line
+            final_output_lines.append(code_line)
 
-                # Append the current annotated line (either the goal or the code line)
-                final_output_lines_with_diags.append(annotated_line)
+        annotated_lines = final_output_lines # Use the newly assembled list
+        logger.info("Finished assembling final annotated output.")
 
-            # Replace the old list (goals + code) with the newly constructed list
-            # (goals + inserted diagnostics + code)
-            annotated_lines = final_output_lines_with_diags
-            logger.info("Finished inserting processed diagnostics.")
-
-        logger.info("Finished line-by-line goal annotation and diagnostic insertion.")
-
-        analysis_succeeded = True  # Mark that the main analysis part finished
+        analysis_succeeded = True
 
     except ConnectionError as e:
         logger.error(f"LSP Connection Error during analysis: {e}")
-        annotated_lines.append(f"-- Error: LSP Connection Failed: {e}")
+        # Ensure final_output_lines has something to join if error happens early
+        if not ('final_output_lines' in locals() and final_output_lines):
+             final_output_lines = ['-- Error: LSP Connection Failed early in analysis']
+        else: # Append error if analysis was partially done
+             final_output_lines.append(f"-- Error: LSP Connection Failed: {e}")
+        analysis_succeeded = False # Mark as failed
     except asyncio.TimeoutError as e:
-        logger.error(
-            f"LSP Overall Timeout Error during analysis (e.g., initialize): {e}"
-        )
-        annotated_lines.append(f"-- Error: LSP Timeout: {e}")
+        logger.error(f"LSP Overall Timeout Error during analysis: {e}")
+        if not ('final_output_lines' in locals() and final_output_lines):
+             final_output_lines = ['-- Error: LSP Timeout early in analysis']
+        else:
+             final_output_lines.append(f"-- Error: LSP Timeout: {e}")
+        analysis_succeeded = False
     except Exception as e:
-        logger.exception(
-            f"Unhandled exception during LSP analysis setup or goal loop: {e}"
-        )
-        annotated_lines.append(f"-- Error: Unexpected analysis failure: {e}")
+        logger.exception(f"Unhandled exception during LSP analysis: {e}")
+        if not ('final_output_lines' in locals() and final_output_lines):
+             final_output_lines = [f'-- Error: Unexpected analysis failure: {e}']
+        else:
+             final_output_lines.append(f"-- Error: Unexpected analysis failure: {e}")
+        analysis_succeeded = False
     finally:
-        if client:
+        # LSP Client shutdown (same as original code)
+        if client and client.process: # Check if client was initialized
+            logger.info("Shutting down LSP client...")
             try:
                 await client.shutdown()
                 await client.exit()
             except Exception as shutdown_e:
-                logger.warning(
-                    f"Error during graceful shutdown/exit (forcing close): {shutdown_e}"
-                )
+                logger.warning(f"Error during graceful shutdown/exit (forcing close): {shutdown_e}")
             finally:
                 await client.close()
+        else:
+             logger.info("LSP client was not fully started or already closed.")
 
-    # --- Step 5: Append ONLY Build Error (LSP Diags are inline) ---
-    final_output_lines = annotated_lines  # Start with the annotated code + inline diags
 
-    # Section for Original Build Failure Report (Fallback Error)
-    # - Always include if analysis ran
+    # --- Append Build Error Section (same logic as original) ---
+    # Ensure final_output_lines exists even if analysis failed very early
+    if 'final_output_lines' not in locals():
+         final_output_lines = ["-- Analysis failed before generating output --"]
+
     if analysis_succeeded:
         final_output_lines.append("\n-- Build System Output (lake build) --")
         if fallback_error and fallback_error != "LSP analysis failed.":
-            fallback_lines = [
-                "--   " + line for line in fallback_error.strip().splitlines()
-            ]
+            fallback_lines = ["--   " + line for line in fallback_error.strip().splitlines()]
             final_output_lines.extend(fallback_lines)
         else:
-            final_output_lines.append(
-                "-- (Build system output not provided or analysis failed internally)"
-            )
-
-    else:  # Analysis itself failed
+            final_output_lines.append("-- (Build system output not provided or analysis failed internally)")
+    else:
         logger.error("LSP analysis process failed or was incomplete.")
-        failure_header = "-- LSP Analysis Incomplete --"
-        final_output_lines.insert(0, failure_header)
+        # Ensure failure header is inserted correctly even if final_output_lines was created in except block
+        if not final_output_lines or not final_output_lines[0].startswith("-- Error:"):
+             final_output_lines.insert(0, "-- LSP Analysis Incomplete --")
+
+        # Always append build output section on failure too
         final_output_lines.append("\n-- Original Build System Output (lake build) --")
         if fallback_error and fallback_error != "LSP analysis failed.":
-            fallback_lines = [
-                "--   " + line for line in fallback_error.strip().splitlines()
-            ]
+            fallback_lines = ["--   " + line for line in fallback_error.strip().splitlines()]
             final_output_lines.extend(fallback_lines)
         else:
-            final_output_lines.append(
-                "-- (Build system output not provided or analysis failed internally)"
-            )
+            final_output_lines.append("-- (Build system output not provided or analysis failed internally)")
 
+    # --- Return Final Result ---
     return "\n".join(final_output_lines)
