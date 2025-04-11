@@ -761,7 +761,7 @@ class LeanLspClient:
         """
         # NOTE: The method name '$/lean/plainGoal' is assumed.
         # Verify against Lean LSP source/docs for the target Lean version.
-        method = "$/lean/plainGoal"
+        method = "$/lean/plainGoal" # <<< Still assuming this method name
         logger.debug(f"Sending {method} request for {file_uri} at {line}:{character}")
         params = {
             "textDocument": {"uri": file_uri},
@@ -769,22 +769,28 @@ class LeanLspClient:
         }
         try:
             result = await self.send_request(method, params)
+            logger.debug(f"Received result for get_goal({line}:{character}): {result!r}")
             return result
         except LspResponseError as e:
             # Specific errors might be expected if position is invalid, log as warning
             logger.warning(f"{method} request failed with LSP error: {e}")
+            logger.debug(f"Returning None due to LspResponseError for get_goal({line}:{character})")
             return None
         except asyncio.TimeoutError:
             logger.error(
                 f"{method} request timed out for {file_uri} at {line}:{character}"
             )
+            logger.debug(f"Returning None due to TimeoutError for get_goal({line}:{character})")
             return None  # Return None on timeout
         except ConnectionError:
             logger.error(f"Connection error during {method} request.")
+            logger.debug(f"Returning None due to ConnectionError for get_goal({line}:{character})")
             return None  # Return None if connection failed during request
         except Exception as e:
             logger.error(f"Unexpected error sending {method} request: {e}")
+            logger.debug(f"Returning None due to Exception '{e}' for get_goal({line}:{character})")
             return None  # Return None on other errors
+
 
     async def shutdown(self) -> None:
         """Sends the 'shutdown' request to the server.
@@ -1058,17 +1064,95 @@ async def analyze_lean_failure(
         await client.did_open(temp_file_uri, "lean", 1, stripped_code)
         logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri}")
 
-        # --- Step 1: Wait for initial server processing ---
-        initial_wait_seconds = (
-            10.0  # Wait longer for server to process and send diagnostics
-        )
-        logger.info(
-            f"Waiting {initial_wait_seconds}s for initial server processing "
-            "& diagnostics..."
-        )
-        await asyncio.sleep(initial_wait_seconds)
+        # --- Step 2: Annotate with Goals and Inline Diagnostics ---
+        logger.info("Starting line-by-line goal annotation and diagnostic insertion...")
+        for i, line_content in enumerate(code_lines):
+            # Query goal ONLY if the line has content
+            if line_content.strip():
+                current_goal_str = "Error: Could not retrieve goal state"  # Default msg
+                try:
+                    goal_result = await asyncio.wait_for(
+                        client.get_goal(temp_file_uri, line=i, character=0),
+                        timeout=timeout_seconds,
+                    )
 
-        # --- Step 2: Collect All Available Diagnostics ---
+                    logger.debug(f"Raw goal_result before line {i+1} (index {i}): {goal_result!r}")
+
+                    # --- Parse Goal Result (same as previous version) ---
+                    if goal_result and isinstance(goal_result, dict):
+                        if "rendered" in goal_result:
+                            current_goal_str = goal_result["rendered"].strip()
+                        elif "plainGoal" in goal_result:
+                            current_goal_str = goal_result["plainGoal"].strip()
+                        elif (
+                            "goals" in goal_result
+                            and isinstance(goal_result["goals"], list)
+                            and goal_result["goals"]
+                        ):
+                            current_goal_str = (
+                                f"{len(goal_result['goals'])} goal(s): "
+                                + " | ".join(
+                                    [
+                                        g.get("rendered", str(g)).replace("\n", " ")
+                                        for g in goal_result["goals"]
+                                    ]
+                                )
+                            )  # Join multiple goals inline
+                        else:
+                            current_goal_str = (
+                                f"Goal state fmt unknown: {str(goal_result)[:300]}"
+                            )
+                    elif isinstance(goal_result, str):
+                        current_goal_str = goal_result.strip()
+                    elif goal_result is not None:
+                        current_goal_str = (
+                            f"Unexpected goal result type: {str(goal_result)[:100]}"
+                        )
+                    else:
+                        # Log why we are hitting this case
+                        if goal_result is None:
+                            logger.debug(f"Goal result for line {i+1} was None.")
+                        else:
+                            logger.debug(f"Goal result for line {i+1} was not None or dict: type={type(goal_result)}")
+                        current_goal_str = "No goal state reported" # Keep default msg for now
+
+                    if (
+                        not current_goal_str.strip()
+                        or "no goals" in current_goal_str.lower()
+                    ):
+                        current_goal_str = "goals accomplished"
+
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"Timeout ({timeout_seconds}s) retrieving goal state before "
+                        f"line {i + 1}"
+                    )
+                    current_goal_str = "Error: Timeout retrieving goal state"
+                except Exception as goal_e:
+                    logger.error(
+                        f"Error retrieving goal state before line {i + 1}: {goal_e}",
+                        exc_info=True,
+                    )
+                    current_goal_str = f"Error retrieving goal: {goal_e}"
+
+                # Remove markdown fences and strip whitespace
+                cleaned_goal_str = current_goal_str.strip()
+                if cleaned_goal_str.startswith("```lean"):
+                    cleaned_goal_str = cleaned_goal_str.removeprefix("```lean").strip()
+                if cleaned_goal_str.endswith("```"):
+                    cleaned_goal_str = cleaned_goal_str.removesuffix("```").strip()
+
+                # Replace newlines with "; " for single-line output
+                single_line_goal = cleaned_goal_str.replace("\n", "; ")
+
+                # Add the single-line goal comment
+                goal_comment_line = f"-- Goal: {single_line_goal}"
+                annotated_lines.append(goal_comment_line)
+
+                # Always append the original code line content
+                annotated_lines.append(line_content)
+
+        # --- Step 3: Collect All Available Diagnostics ---
         # Use a shorter timeout here as we expect diagnostics might already be queued
         diagnostic_collection_timeout = 5.0
         logger.info(
@@ -1135,88 +1219,34 @@ async def analyze_lean_failure(
                 f"Processed {formatted_diags_count} unique diagnostics into line map."
             )
 
-        # --- Step 3: Annotate with Goals and Inline Diagnostics ---
-        logger.info("Starting line-by-line goal annotation and diagnostic insertion...")
-        for i, line_content in enumerate(code_lines):
-            # Query goal ONLY if the line has content
-            if line_content.strip():
-                current_goal_str = "Error: Could not retrieve goal state"  # Default msg
-                try:
-                    goal_result = await asyncio.wait_for(
-                        client.get_goal(temp_file_uri, line=i, character=0),
-                        timeout=timeout_seconds,
-                    )
-                    # --- Parse Goal Result (same as previous version) ---
-                    if goal_result and isinstance(goal_result, dict):
-                        if "rendered" in goal_result:
-                            current_goal_str = goal_result["rendered"].strip()
-                        elif "plainGoal" in goal_result:
-                            current_goal_str = goal_result["plainGoal"].strip()
-                        elif (
-                            "goals" in goal_result
-                            and isinstance(goal_result["goals"], list)
-                            and goal_result["goals"]
-                        ):
-                            current_goal_str = (
-                                f"{len(goal_result['goals'])} goal(s): "
-                                + " | ".join(
-                                    [
-                                        g.get("rendered", str(g)).replace("\n", " ")
-                                        for g in goal_result["goals"]
-                                    ]
-                                )
-                            )  # Join multiple goals inline
-                        else:
-                            current_goal_str = (
-                                f"Goal state fmt unknown: {str(goal_result)[:300]}"
-                            )
-                    elif isinstance(goal_result, str):
-                        current_goal_str = goal_result.strip()
-                    elif goal_result is not None:
-                        current_goal_str = (
-                            f"Unexpected goal result type: {str(goal_result)[:100]}"
-                        )
-                    else:
-                        current_goal_str = "No goal state reported"
+            # --- Step 4: Insert Diagnostics into Annotated Lines ---
+            logger.info("Inserting processed diagnostics into annotated output...")
+            final_output_lines_with_diags = []
+            original_line_idx = -1 # Track the index of the original code line
 
-                    if (
-                        not current_goal_str.strip()
-                        or "no goals" in current_goal_str.lower()
-                    ):
-                        current_goal_str = "goals accomplished"
+            # Iterate through the lines already annotated with goals
+            for annotated_line in annotated_lines:
+                # Check if the current line is NOT a goal comment
+                # Goal lines added previously start with "-- Goal:"
+                is_code_line = not annotated_line.startswith("-- Goal:")
 
-                except asyncio.TimeoutError:
-                    logger.error(
-                        f"Timeout ({timeout_seconds}s) retrieving goal state before "
-                        f"line {i + 1}"
-                    )
-                    current_goal_str = "Error: Timeout retrieving goal state"
-                except Exception as goal_e:
-                    logger.error(
-                        f"Error retrieving goal state before line {i + 1}: {goal_e}",
-                        exc_info=True,
-                    )
-                    current_goal_str = f"Error retrieving goal: {goal_e}"
+                if is_code_line:
+                    original_line_idx += 1 # Increment index only for original code lines
+                    # Check if we have diagnostics reported for this original line index
+                    if original_line_idx in diagnostics_by_line:
+                        # Insert the diagnostics *before* appending the code line
+                        # Add indentation to diagnostics for readability
+                        indented_diags = ["  " + diag for diag in diagnostics_by_line[original_line_idx]]
+                        final_output_lines_with_diags.extend(indented_diags)
+                        logger.debug(f"Inserted {len(indented_diags)} diagnostics before line index {original_line_idx}")
 
-                # Remove markdown fences and strip whitespace
-                cleaned_goal_str = current_goal_str.strip()
-                if cleaned_goal_str.startswith("```lean"):
-                    cleaned_goal_str = cleaned_goal_str.removeprefix("```lean").strip()
-                if cleaned_goal_str.endswith("```"):
-                    cleaned_goal_str = cleaned_goal_str.removesuffix("```").strip()
+                # Append the current annotated line (either the goal or the code line)
+                final_output_lines_with_diags.append(annotated_line)
 
-                # Replace newlines with "; " for single-line output
-                single_line_goal = cleaned_goal_str.replace("\n", "; ")
-
-                # Add the single-line goal comment
-                goal_comment_line = f"-- Goal: {single_line_goal}"
-                annotated_lines.append(goal_comment_line)
-
-                # Always append the original code line content
-                annotated_lines.append(line_content)
-
-                if i in diagnostics_by_line:
-                    annotated_lines.extend(diagnostics_by_line[i])
+            # Replace the old list (goals + code) with the newly constructed list
+            # (goals + inserted diagnostics + code)
+            annotated_lines = final_output_lines_with_diags
+            logger.info("Finished inserting processed diagnostics.")
 
         logger.info("Finished line-by-line goal annotation and diagnostic insertion.")
 
@@ -1247,7 +1277,7 @@ async def analyze_lean_failure(
             finally:
                 await client.close()
 
-    # --- Step 4 & 5: Append ONLY Build Error (LSP Diags are inline) ---
+    # --- Step 5: Append ONLY Build Error (LSP Diags are inline) ---
     final_output_lines = annotated_lines  # Start with the annotated code + inline diags
 
     # Section for Original Build Failure Report (Fallback Error)
