@@ -33,7 +33,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 # Import the LSP client and specific error from the new module
-from .lsp_client import LeanLspClient, LspResponseError
+from .lsp_client import LeanLspClient
 
 # --- Logging Configuration ---
 # Configure logging level using the LOGLEVEL environment variable.
@@ -45,24 +45,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Default timeout for analysis steps, can be overridden in analyze_lean_failure
-DEFAULT_ANALYSIS_TIMEOUT = 60 # Increased default for the whole analysis function
+DEFAULT_ANALYSIS_TIMEOUT = 60  # Increased default for the whole analysis function
 
 
 # --- Module-Level Helper Functions ---
-
-def strip_lean_comments(lean_code: str) -> str:
-    """Strips single-line Lean comments (--...) from code.
-
-    Args:
-        lean_code: The Lean code string.
-
-    Returns:
-        The Lean code with single-line comments removed.
-    """
-    lines = lean_code.splitlines()
-    # Remove comments, but keep line structure (even if line becomes empty)
-    stripped_lines = [re.sub(r"--.*$", "", line) for line in lines]
-    return "\n".join(stripped_lines)
 
 
 def _get_lean_path_env(
@@ -84,7 +70,7 @@ def _get_lean_path_env(
     """
     subprocess_env = os.environ.copy()
     lean_paths: List[str] = []
-    seen_paths = set() # To avoid duplicates based on resolved paths
+    seen_paths = set()  # To avoid duplicates based on resolved paths
 
     # 1. Detect Stdlib Path (synchronous call)
     try:
@@ -101,11 +87,15 @@ def _get_lean_path_env(
             std_lib_path = path_candidate
             resolved_p = str(pathlib.Path(std_lib_path).resolve())
             if resolved_p not in seen_paths:
-                logger.debug(f"Path Env (Helper): Detected Lean stdlib path: {std_lib_path}")
+                logger.debug(
+                    f"Path Env (Helper): Detected Lean stdlib path: {std_lib_path}"
+                )
                 lean_paths.append(std_lib_path)
                 seen_paths.add(resolved_p)
         else:
-            logger.warning(f"Path Env (Helper): --print-libdir invalid output: '{path_candidate}'")
+            logger.warning(
+                f"Path Env (Helper): --print-libdir invalid output: '{path_candidate}'"
+            )
     except Exception as e:
         logger.warning(f"Path Env (Helper): Failed to detect Lean stdlib path: {e}")
 
@@ -115,20 +105,32 @@ def _get_lean_path_env(
         if shared_lib_build_path.is_dir():
             abs_path = str(shared_lib_build_path.resolve())
             if abs_path not in seen_paths:
-                logger.debug(f"Path Env (Helper): Adding shared lib build path: {abs_path}")
-                lean_paths.append(str(shared_lib_build_path)) # Use original form
+                logger.debug(
+                    f"Path Env (Helper): Adding shared lib build path: {abs_path}"
+                )
+                lean_paths.append(str(shared_lib_build_path))  # Use original form
                 seen_paths.add(abs_path)
         else:
-            logger.warning(f"Path Env (Helper): Shared lib path provided but build dir not found: {shared_lib_build_path}")
+            logger.warning(
+                "Path Env (Helper): Shared lib path provided but build dir "
+                f"not found: {shared_lib_build_path}"
+            )
     elif lib_path:
-        logger.warning(f"Path Env (Helper): Provided shared_lib_path is not a valid directory: {lib_path}")
+        logger.warning(
+            "Path Env (Helper): Provided shared_lib_path is not a valid directory: "
+            f"{lib_path}"
+        )
 
     # 3. Add Temporary Project's *Own* Build Path
     temp_project_build_path = pathlib.Path(project_cwd) / ".lake" / "build" / "lib"
     abs_temp_path = str(temp_project_build_path.resolve())
     if abs_temp_path not in seen_paths:
-        logger.debug(f"Path Env (Helper): Adding temp project's own build path: {abs_temp_path}")
-        lean_paths.append(str(temp_project_build_path)) # Add even if it doesn't exist yet
+        logger.debug(
+            f"Path Env (Helper): Adding temp project's own build path: {abs_temp_path}"
+        )
+        lean_paths.append(
+            str(temp_project_build_path)
+        )  # Add even if it doesn't exist yet
         seen_paths.add(abs_temp_path)
 
     # 4. Combine with existing LEAN_PATH
@@ -136,10 +138,12 @@ def _get_lean_path_env(
     if existing_lean_path:
         # Add components of existing path individually to check uniqueness
         for p in existing_lean_path.split(os.pathsep):
-             if p: # Ignore empty components
+            if p:  # Ignore empty components
                 resolved_p = str(pathlib.Path(p).resolve())
                 if resolved_p not in seen_paths:
-                    logger.debug(f"Path Env (Helper): Adding existing LEAN_PATH component: {p}")
+                    logger.debug(
+                        f"Path Env (Helper): Adding existing LEAN_PATH component: {p}"
+                    )
                     lean_paths.append(p)
                     seen_paths.add(resolved_p)
 
@@ -149,7 +153,9 @@ def _get_lean_path_env(
         subprocess_env["LEAN_PATH"] = final_lean_path
         logger.info(f"Path Env (Helper): Setting LEAN_PATH: {final_lean_path}")
     else:
-        logger.warning("Path Env (Helper): Could not determine any paths for LEAN_PATH.")
+        logger.warning(
+            "Path Env (Helper): Could not determine any paths for LEAN_PATH."
+        )
 
     return subprocess_env
 
@@ -208,21 +214,29 @@ def _parse_goal_result(goal_result: Optional[Any]) -> str:
         # Prioritize 'rendered' if available (often formatted nicely)
         if "rendered" in goal_result:
             return goal_result["rendered"].strip()
-        if "plainGoal" in goal_result: # Fallback to plainGoal
+        if "plainGoal" in goal_result:  # Fallback to plainGoal
             return goal_result["plainGoal"].strip()
         # Handle case where 'goals' list might be present (less common for plainGoal?)
-        if ("goals" in goal_result and
-            isinstance(goal_result["goals"], list) and
-            goal_result["goals"]):
-                return f"{len(goal_result['goals'])} goal(s): " + " | ".join(
-                    [g.get("rendered", str(g)).replace("\n", " ") for g in goal_result["goals"]]
-                )
+        if (
+            "goals" in goal_result
+            and isinstance(goal_result["goals"], list)
+            and goal_result["goals"]
+        ):
+            return f"{len(goal_result['goals'])} goal(s): " + " | ".join(
+                [
+                    g.get("rendered", str(g)).replace("\n", " ")
+                    for g in goal_result["goals"]
+                ]
+            )
         # If known fields aren't found, represent the dict structure partially
         return f"Goal state (unknown format): {str(goal_result)[:300]}"
-    elif isinstance(goal_result, str): # If the result was just a string
+    elif isinstance(goal_result, str):  # If the result was just a string
         return goal_result.strip()
-    else: # Handle unexpected types
-        return f"Unexpected goal result type: {type(goal_result).__name__} ({str(goal_result)[:100]})"
+    else:  # Handle unexpected types
+        return (
+            f"Unexpected goal result type: {type(goal_result).__name__} "
+            f"({str(goal_result)[:100]})"
+        )
 
 
 def _clean_goal_string(goal_str: str) -> Tuple[str, str]:
@@ -246,12 +260,12 @@ def _clean_goal_string(goal_str: str) -> Tuple[str, str]:
         cleaned = cleaned.removesuffix("```").strip()
 
     if not cleaned or "no goals" in cleaned.lower():
-        cleaned = "goals accomplished" # Standardize empty/accomplished state
+        cleaned = "goals accomplished"  # Standardize empty/accomplished state
 
     # Create single-line version, replacing newlines
     single_line = cleaned.replace("\n", "; ").strip()
     # Further condense multiple spaces that might result from replacements
-    single_line = re.sub(r'\s{2,}', ' ', single_line)
+    single_line = re.sub(r"\s{2,}", " ", single_line)
 
     return cleaned, single_line
 
@@ -269,7 +283,9 @@ def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> str:
         before the corresponding code line.
     """
     severity_map = {1: "Error", 2: "Warning", 3: "Info", 4: "Hint"}
-    severity = severity_map.get(diag.get("severity", 0), "Diagnostic") # Default if unknown
+    severity = severity_map.get(
+        diag.get("severity", 0), "Diagnostic"
+    )  # Default if unknown
     message = diag.get("message", "Unknown diagnostic message.")
     diag_range = diag.get("range", {})
     start_pos = diag_range.get("start", {})
@@ -289,6 +305,7 @@ def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> str:
 
 
 # --- Main Analysis Function ---
+
 
 async def analyze_lean_failure(
     lean_code: str,
@@ -322,7 +339,7 @@ async def analyze_lean_failure(
     """
 
     # --- Pre-check using direct lean execution ---
-    first_compiler_error_line = float("inf") # Use 1-based indexing from compiler
+    first_compiler_error_line = float("inf")  # Use 1-based indexing from compiler
     temp_precheck_filename = "precheck_analysis_file.lean"
     temp_precheck_path = pathlib.Path(cwd) / temp_precheck_filename
 
@@ -333,12 +350,14 @@ async def analyze_lean_failure(
         logger.info(f"Pre-check: Writing processed code to {temp_precheck_path}")
         temp_precheck_path.write_text(processed_code, encoding="utf-8")
 
-        logger.info(f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}")
+        logger.info(
+            f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}"
+        )
         # Use a fraction of the total timeout for the pre-check
         precheck_timeout = max(5, timeout_seconds // 3)
         precheck_env = _get_lean_path_env(lean_executable_path, cwd, shared_lib_path)
 
-        result = await asyncio.to_thread( # Run blocking subprocess in thread
+        result = await asyncio.to_thread(  # Run blocking subprocess in thread
             subprocess.run,
             [lean_executable_path, temp_precheck_filename],
             capture_output=True,
@@ -348,33 +367,51 @@ async def analyze_lean_failure(
             encoding="utf-8",
             errors="replace",
             env=precheck_env,
-            check=False # Don't raise exception on non-zero exit code
+            check=False,  # Don't raise exception on non-zero exit code
         )
 
         # Parse stdout/stderr for the first error line
         error_pattern = re.compile(r".*?:(\d+):\d+:\s*error:")
-        output_to_scan = result.stdout + "\n" + result.stderr # Combine outputs
+        output_to_scan = result.stdout + "\n" + result.stderr  # Combine outputs
         output_lines = output_to_scan.splitlines()
-        logger.debug(f"Pre-check stdout/stderr ({len(output_lines)} lines): {output_to_scan[:500]}...")
+        logger.debug(
+            f"Pre-check stdout/stderr ({len(output_lines)} lines): "
+            f"{output_to_scan[:500]}..."
+        )
 
-        for line_num_str in (match.group(1) for match in (error_pattern.match(line) for line in output_lines) if match):
+        for line_num_str in (
+            match.group(1)
+            for match in (error_pattern.match(line) for line in output_lines)
+            if match
+        ):
             try:
                 # Line number refers to lines in the processed code file
                 first_compiler_error_line = int(line_num_str)
-                logger.info(f"Pre-check: Found first compiler error on line: {first_compiler_error_line} (in processed code)")
-                break # Stop after finding the first one
+                logger.info(
+                    "Pre-check: Found first compiler error on line: "
+                    f"{first_compiler_error_line} (in processed code)"
+                )
+                break  # Stop after finding the first one
             except ValueError:
-                logger.warning(f"Pre-check: Failed to parse line number from match: {line_num_str}")
+                logger.warning(
+                    f"Pre-check: Failed to parse line number from match: {line_num_str}"
+                )
 
         if first_compiler_error_line == float("inf"):
-            logger.info("Pre-check: No errors found matching pattern in compiler output.")
+            logger.info(
+                "Pre-check: No errors found matching pattern in compiler output."
+            )
 
     except FileNotFoundError:
-        logger.error(f"Pre-check Failed: Lean executable not found at '{lean_executable_path}'.")
+        logger.error(
+            f"Pre-check Failed: Lean executable not found at '{lean_executable_path}'."
+        )
     except subprocess.TimeoutExpired:
         logger.warning(f"Pre-check: Timed out after {precheck_timeout}s.")
     except Exception as precheck_e:
-        logger.warning(f"Pre-check: Failed with unexpected error: {precheck_e}", exc_info=True)
+        logger.warning(
+            f"Pre-check: Failed with unexpected error: {precheck_e}", exc_info=True
+        )
     finally:
         # Clean up the temporary file
         if temp_precheck_path.exists():
@@ -382,7 +419,9 @@ async def analyze_lean_failure(
                 temp_precheck_path.unlink()
                 logger.debug(f"Pre-check: Cleaned up {temp_precheck_path}")
             except OSError as e:
-                logger.warning(f"Pre-check: Could not delete temp file {temp_precheck_path}: {e}")
+                logger.warning(
+                    f"Pre-check: Could not delete temp file {temp_precheck_path}: {e}"
+                )
 
     # --- Initialize LSP Client ---
     # Use a reasonable timeout for individual client operations, less than total
@@ -412,7 +451,7 @@ async def analyze_lean_failure(
         # --- Start LSP and Open Document ---
         logger.info("Starting LSP client...")
         await client.start_server()
-        await client.initialize() # Handshake
+        await client.initialize()  # Handshake
 
         # Base the analysis on the lines from the processed code
         code_lines = processed_code.splitlines()
@@ -423,7 +462,7 @@ async def analyze_lean_failure(
 
         # --- Wait for initial diagnostics ---
         # Give Lean LSP time to process the file after opening.
-        initial_wait_time = min(10.0, client_timeout / 2) # Wait up to 10s
+        initial_wait_time = min(10.0, client_timeout / 2)  # Wait up to 10s
         logger.info(f"Waiting {initial_wait_time:.1f}s for initial diagnostics...")
         await asyncio.sleep(initial_wait_time)
         # Collect diagnostics generated so far
@@ -436,89 +475,135 @@ async def analyze_lean_failure(
         for diag in collected_diagnostics:
             if diag.get("severity") == 1:  # 1 is Error severity in LSP
                 try:
-                    line_idx = diag.get("range", {}).get("start", {}).get("line", float("inf"))
-                    first_lsp_error_line_idx = min(first_lsp_error_line_idx, float(line_idx))
+                    line_idx = (
+                        diag.get("range", {}).get("start", {}).get("line", float("inf"))
+                    )
+                    first_lsp_error_line_idx = min(
+                        first_lsp_error_line_idx, float(line_idx)
+                    )
                 except (ValueError, TypeError):
-                    logger.warning(f"Could not parse line number from diagnostic: {diag}")
+                    logger.warning(
+                        f"Could not parse line number from diagnostic: {diag}"
+                    )
 
         # Combine pre-check (1-based) and LSP error (0-based) into 0-based index
         effective_error_line_idx = min(
-            float(first_compiler_error_line) - 1, # Convert pre-check line to 0-based
-            first_lsp_error_line_idx
+            float(first_compiler_error_line) - 1,  # Convert pre-check line to 0-based
+            first_lsp_error_line_idx,
         )
 
         if effective_error_line_idx != float("inf"):
-            effective_error_line_idx = int(effective_error_line_idx) # Convert back to int if found
-            logger.info(f"Effective first error detected near line index: {effective_error_line_idx} (Line {effective_error_line_idx + 1} in processed code)")
+            effective_error_line_idx = int(
+                effective_error_line_idx
+            )  # Convert back to int if found
+            logger.info(
+                "Effective first error detected near line index: "
+                f"{effective_error_line_idx} (Line {effective_error_line_idx + 1} "
+                "in processed code)"
+            )
         else:
             logger.info("No errors detected from pre-check or initial LSP diagnostics.")
-            effective_error_line_idx = -1 # Use -1 to indicate no error found
+            effective_error_line_idx = -1  # Use -1 to indicate no error found
 
         # --- Goal fetching loop ---
-        logger.info("Starting line-by-line goal annotation (marking N/A after error)...")
-        goal_lines_buffer: List[Optional[str]] = [] # Store goals or None/Error/NA
-        code_lines_buffer: List[str] = code_lines # Use processed code lines
+        logger.info(
+            "Starting line-by-line goal annotation (marking N/A after error)..."
+        )
+        goal_lines_buffer: List[Optional[str]] = []  # Store goals or None/Error/NA
+        code_lines_buffer: List[str] = code_lines  # Use processed code lines
 
         for i, line_content in enumerate(code_lines_buffer):
-            goal_comment_line: Optional[str] = None # Default to no goal comment
+            goal_comment_line: Optional[str] = None  # Default to no goal comment
 
             # Only fetch goals for non-empty/non-whitespace lines
             if line_content.strip():
                 if effective_error_line_idx != -1 and i >= effective_error_line_idx:
                     # Error detected earlier, mark goal as N/A
-                    goal_comment_line = f"-- Goal: N/A (error detected near line {effective_error_line_idx + 1})"
+                    goal_comment_line = (
+                        f"-- Goal: N/A (error detected near line "
+                        f"{effective_error_line_idx + 1})"
+                    )
                     logger.debug(f"Marking goal N/A for code line index {i}")
                 else:
                     # No error detected yet *at or before* this line, try to fetch goal
-                    goal_status_msg = "Error: Default goal retrieval failure" # Placeholder
+                    goal_status_msg = (
+                        "Error: Default goal retrieval failure"  # Placeholder
+                    )
                     try:
                         # Use client's timeout setting for individual goal request
-                        goal_result = await client.get_goal(temp_file_uri, line=i, character=0)
+                        goal_result = await client.get_goal(
+                            temp_file_uri, line=i, character=0
+                        )
 
-                        # goal_result can be None if client.get_goal had an error/timeout
-                        parsed_goal = _parse_goal_result(goal_result) # Handles None case internally
+                        # goal_result can be None if client.get_goal had an
+                        # error/timeout
+                        parsed_goal = _parse_goal_result(
+                            goal_result
+                        )  # Handles None case internally
                         if parsed_goal.startswith("Error:"):
-                            goal_status_msg = parsed_goal # Use error from parsing
-                            logger.warning(f"Failed to parse goal result for line {i+1}: {parsed_goal}")
+                            goal_status_msg = parsed_goal  # Use error from parsing
+                            logger.warning(
+                                "Failed to parse goal result for line "
+                                f"{i + 1}: {parsed_goal}"
+                            )
                         else:
                             _, single_line_goal = _clean_goal_string(parsed_goal)
                             goal_comment_line = f"-- Goal: {single_line_goal}"
-                            goal_status_msg = "Success" # Mark as success
+                            goal_status_msg = "Success"  # Mark as success
 
-                    # client.get_goal handles internal LspResponseError, TimeoutError, etc.
-                    # and returns None in those cases. _parse_goal_result turns None into an error string.
-                    # We catch broader errors here that might occur outside the client call itself.
+                    # client.get_goal handles internal LspResponseError, TimeoutError,
+                    # etc. and returns None in those cases. _parse_goal_result turns
+                    # None into an error string.
+                    # We catch broader errors here that might occur outside the
+                    # client call itself.
                     except ConnectionError as goal_conn_e:
-                         logger.error(f"Connection error during goal retrieval loop for line {i+1}: {goal_conn_e}")
-                         goal_status_msg = "-- Goal: Error: Connection failed during goal retrieval"
-                         # Consider breaking the loop if connection is lost
-                         # break
+                        logger.error(
+                            "Connection error during goal retrieval loop for line "
+                            f"{i + 1}: {goal_conn_e}"
+                        )
+                        goal_status_msg = (
+                            "-- Goal: Error: Connection failed during goal retrieval"
+                        )
+                        # Consider breaking the loop if connection is lost
+                        # break
                     except Exception as goal_e:
-                        logger.error(f"Unexpected error during goal processing for line {i + 1}: {goal_e}", exc_info=True)
-                        goal_status_msg = f"-- Goal: Error processing goal: {type(goal_e).__name__}"
+                        logger.error(
+                            "Unexpected error during goal processing for line "
+                            f"{i + 1}: {goal_e}",
+                            exc_info=True,
+                        )
+                        goal_status_msg = (
+                            f"-- Goal: Error processing goal: {type(goal_e).__name__}"
+                        )
 
                     # If goal fetching resulted in an error message instead of a goal
                     if goal_comment_line is None:
-                         goal_comment_line = f"-- Goal: {goal_status_msg}"
+                        goal_comment_line = f"-- Goal: {goal_status_msg}"
 
-
-            goal_lines_buffer.append(goal_comment_line) # Append goal/N/A/Error/None
+            goal_lines_buffer.append(goal_comment_line)  # Append goal/N/A/Error/None
 
         # --- Collect final diagnostics and process ---
         # Fetch diagnostics again in case more arrived during goal fetching.
         diagnostic_collection_timeout = min(5.0, client_timeout)
-        logger.info(f"Collecting final diagnostics (timeout={diagnostic_collection_timeout:.1f}s)...")
-        more_diagnostics = await client.get_diagnostics(timeout=diagnostic_collection_timeout)
+        logger.info(
+            f"Collecting final diagnostics (timeout="
+            f"{diagnostic_collection_timeout:.1f}s)..."
+        )
+        more_diagnostics = await client.get_diagnostics(
+            timeout=diagnostic_collection_timeout
+        )
         collected_diagnostics.extend(more_diagnostics)
         logger.info(f"Total collected diagnostics: {len(collected_diagnostics)}")
 
         # Process all collected diagnostics for inline reporting
         if collected_diagnostics:
-            logger.debug(f"Processing {len(collected_diagnostics)} total diagnostics...")
+            logger.debug(
+                f"Processing {len(collected_diagnostics)} total diagnostics..."
+            )
             formatted_diags_count = 0
-            seen_diags = set() # De-duplicate based on key fields
+            seen_diags = set()  # De-duplicate based on key fields
             for diag in collected_diagnostics:
-                 diag_sig = (
+                diag_sig = (
                     diag.get("severity"),
                     diag.get("range", {}).get("start", {}).get("line"),
                     diag.get("range", {}).get("start", {}).get("character"),
@@ -526,21 +611,26 @@ async def analyze_lean_failure(
                     diag.get("range", {}).get("end", {}).get("character"),
                     diag.get("message"),
                 )
-                 if diag_sig in seen_diags:
+                if diag_sig in seen_diags:
                     continue
-                 seen_diags.add(diag_sig)
+                seen_diags.add(diag_sig)
 
-                 # Get the primary line index (refers to processed lines)
-                 start_line_idx = diag.get("range", {}).get("start", {}).get("line", -1)
-                 if start_line_idx != -1 and start_line_idx < len(code_lines_buffer):
+                # Get the primary line index (refers to processed lines)
+                start_line_idx = diag.get("range", {}).get("start", {}).get("line", -1)
+                if start_line_idx != -1 and start_line_idx < len(code_lines_buffer):
                     # Pass the correct line index from the processed code
                     diag_log_line = _format_diagnostic_line(diag, start_line_idx)
                     diagnostics_by_line[start_line_idx].append(diag_log_line)
                     formatted_diags_count += 1
-                 else:
-                      logger.warning(f"Diagnostic reported for invalid line index {start_line_idx}: {diag}")
+                else:
+                    logger.warning(
+                        "Diagnostic reported for invalid line index "
+                        f"{start_line_idx}: {diag}"
+                    )
 
-            logger.info(f"Processed {formatted_diags_count} unique diagnostics into line map.")
+            logger.info(
+                f"Processed {formatted_diags_count} unique diagnostics into line map."
+            )
 
         # --- Assemble final output ---
         logger.info("Assembling final annotated output...")
@@ -550,14 +640,19 @@ async def analyze_lean_failure(
             goal_comment = goal_lines_buffer[i]
             if goal_comment is not None:
                 # Exclude noisy "no goal" messages unless they indicate accomplishment
-                if (goal_comment != "-- Goal: No goal state reported" or
-                    "accomplished" in goal_comment):
+                if (
+                    goal_comment != "-- Goal: No goal state reported"
+                    or "accomplished" in goal_comment
+                ):
                     final_output_lines.append(goal_comment)
 
             # 2. Add diagnostics reported for this line index *before* the code
             if i in diagnostics_by_line:
                 final_output_lines.extend(diagnostics_by_line[i])
-                logger.debug(f"Inserted {len(diagnostics_by_line[i])} diagnostics before line index {i}")
+                logger.debug(
+                    f"Inserted {len(diagnostics_by_line[i])} diagnostics before "
+                    f"line index {i}"
+                )
 
             # 3. Add the processed code line
             final_output_lines.append(code_line)
@@ -580,9 +675,9 @@ async def analyze_lean_failure(
         analysis_succeeded = False
     finally:
         # Ensure LSP Client is closed gracefully
-        if 'client' in locals() and client:
+        if "client" in locals() and client:
             logger.info("Shutting down LSP client...")
-            await client.close() # Use the client's comprehensive close method
+            await client.close()  # Use the client's comprehensive close method
 
     # --- Append Build Error Section ---
     # Ensure final_output_lines exists even if analysis failed very early
@@ -590,14 +685,18 @@ async def analyze_lean_failure(
         final_output_lines = ["-- Analysis failed before generating LSP output --"]
 
     # Add appropriate header based on success/failure
-    if not analysis_succeeded and (not final_output_lines or not final_output_lines[0].startswith("-- Error:")):
-         final_output_lines.insert(0, "-- LSP Analysis Incomplete --")
+    if not analysis_succeeded and (
+        not final_output_lines or not final_output_lines[0].startswith("-- Error:")
+    ):
+        final_output_lines.insert(0, "-- LSP Analysis Incomplete --")
 
     # Append the original fallback error message
     final_output_lines.append("\n-- Build System Output --")
     if fallback_error:
         # Indent fallback error lines for clarity
-        fallback_lines = ["--   " + line for line in fallback_error.strip().splitlines()]
+        fallback_lines = [
+            "--   " + line for line in fallback_error.strip().splitlines()
+        ]
         final_output_lines.extend(fallback_lines)
     else:
         final_output_lines.append("-- (Original build system output not provided)")

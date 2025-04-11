@@ -14,7 +14,7 @@ import logging
 import os
 import pathlib
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # --- Logging Configuration ---
 # Each module should get its own logger instance.
@@ -30,12 +30,14 @@ DEFAULT_LSP_TIMEOUT = 30  # Seconds for typical LSP request/response
 
 # --- Custom Exception ---
 
+
 class LspResponseError(Exception):
     """Custom exception for LSP error responses.
 
     Attributes:
         code (Any): The error code from the LSP response. Defaults to "Unknown".
-        message (str): The error message from the LSP response. Defaults to "Unknown error".
+        message (str): The error message from the LSP response. Defaults to
+            "Unknown error".
         data (Any): Optional additional data provided with the error.
     """
 
@@ -52,6 +54,7 @@ class LspResponseError(Exception):
 
 
 # --- LSP Client Class ---
+
 
 class LeanLspClient:
     """Manages communication with a lean --server process via LSP over stdio.
@@ -187,10 +190,11 @@ class LeanLspClient:
                         f"({self.shared_lib_path}), but build dir not found at "
                         f"{shared_lib_build_path}"
                     )
-            elif self.shared_lib_path: # Log if path was provided but invalid
-                logger.warning(f"LSP Env: Provided shared_lib_path "
-                               f"({self.shared_lib_path}) is not a valid directory.")
-
+            elif self.shared_lib_path:  # Log if path was provided but invalid
+                logger.warning(
+                    f"LSP Env: Provided shared_lib_path "
+                    f"({self.shared_lib_path}) is not a valid directory."
+                )
 
             # 3. Add Temporary Project's *Own* Build Path
             temp_project_build_path = pathlib.Path(self.cwd) / ".lake" / "build" / "lib"
@@ -208,7 +212,10 @@ class LeanLspClient:
             if existing_lean_path:
                 # Avoid adding duplicates if already present
                 if existing_lean_path not in lean_paths:
-                    logger.debug(f"LSP Env: Adding existing LEAN_PATH from environment: {existing_lean_path}")
+                    logger.debug(
+                        "LSP Env: Adding existing LEAN_PATH from environment: "
+                        f"{existing_lean_path}"
+                    )
                     lean_paths.append(existing_lean_path)
                 else:
                     logger.debug(
@@ -222,10 +229,11 @@ class LeanLspClient:
                 unique_lean_paths = []
                 seen_paths = set()
                 for p in lean_paths:
-                    # Resolve paths to handle potential symbolic links or case differences
+                    # Resolve paths to handle potential symbolic links or case
+                    # differences
                     resolved_p = str(pathlib.Path(p).resolve())
                     if resolved_p not in seen_paths:
-                        unique_lean_paths.append(p) # Append original path string
+                        unique_lean_paths.append(p)  # Append original path string
                         seen_paths.add(resolved_p)
 
                 final_lean_path = os.pathsep.join(unique_lean_paths)
@@ -253,7 +261,9 @@ class LeanLspClient:
             self.writer = self.process.stdin
 
             if not self.reader or not self.writer:
-                 raise ConnectionError("Failed to get stdout/stdin streams from subprocess.")
+                raise ConnectionError(
+                    "Failed to get stdout/stdin streams from subprocess."
+                )
 
             # Start task to read stderr separately for debugging
             self._stderr_task = asyncio.create_task(
@@ -352,29 +362,35 @@ class LeanLspClient:
             # Read Content-Length header line by line until separator found
             header_lines_bytes = bytearray()
             while True:
-                # Use a longer timeout for reading headers, as server might be slow initially
+                # Use a longer timeout for reading headers, as server might be slow
+                # initially
                 line_bytes = await asyncio.wait_for(
                     self.reader.readline(), timeout=self.timeout * 3
                 )
                 if not line_bytes:
                     raise asyncio.IncompleteReadError("EOF before headers end", None)
                 header_lines_bytes.extend(line_bytes)
-                if line_bytes == HEADER_SEPARATOR[:2]: # Check for \r\n signifies end of line
+                if (
+                    line_bytes == HEADER_SEPARATOR[:2]
+                ):  # Check for \r\n signifies end of line
                     # Check if the last four bytes form the full separator
                     if header_lines_bytes.endswith(HEADER_SEPARATOR):
-                         # Remove the final separator itself for parsing
-                         header_lines_bytes = header_lines_bytes[:-len(HEADER_SEPARATOR)]
-                         break
-                    elif header_lines_bytes.endswith(b'\n\n'): # Tolerate \n\n
-                        logger.warning("LSP message used non-standard \\n\\n header separator.")
+                        # Remove the final separator itself for parsing
+                        header_lines_bytes = header_lines_bytes[
+                            : -len(HEADER_SEPARATOR)
+                        ]
+                        break
+                    elif header_lines_bytes.endswith(b"\n\n"):  # Tolerate \n\n
+                        logger.warning(
+                            "LSP message used non-standard \\n\\n header separator."
+                        )
                         header_lines_bytes = header_lines_bytes[:-2]
                         break
                 # Safety break if header gets excessively long
                 if len(header_lines_bytes) > 4096:
                     raise ValueError("Excessively long LSP header received.")
 
-
-            header_str = header_lines_bytes.decode("ascii") # Headers must be ASCII
+            header_str = header_lines_bytes.decode("ascii")  # Headers must be ASCII
             content_length = -1
             for h_line in header_str.splitlines():
                 if h_line.lower().startswith("content-length:"):
@@ -383,48 +399,60 @@ class LeanLspClient:
                         break
                     except ValueError:
                         logger.error(f"Invalid Content-Length value: {h_line}")
-                        return None # Bad message format
+                        return None  # Bad message format
 
             if content_length == -1:
                 logger.error(
                     "Content-Length header not found in received headers: "
                     f"{header_str!r}"
                 )
-                return None # Bad message format
+                return None  # Bad message format
 
             # Read JSON body
             json_body_bytes = await asyncio.wait_for(
                 self.reader.readexactly(content_length), timeout=self.timeout
             )
-            json_body_str = json_body_bytes.decode("utf-8") # Body is UTF-8
+            json_body_str = json_body_bytes.decode("utf-8")  # Body is UTF-8
 
             message = json.loads(json_body_str)
             # logger.debug(f"LSP Received Raw: {json_body_str}") # Very Verbose
             return message
 
         except asyncio.TimeoutError:
-            logger.error(f"Timeout reading LSP message header or body (timeout={self.timeout}s).")
-            await self.close() # Close connection on timeout
+            logger.error(
+                f"Timeout reading LSP message header or body (timeout={self.timeout}s)."
+            )
+            await self.close()  # Close connection on timeout
             return None
         except asyncio.IncompleteReadError as e:
-            if not self._closed: # Ignore if we initiated the close
-                logger.error(f"Server closed connection unexpectedly while reading: {e}")
+            if not self._closed:  # Ignore if we initiated the close
+                logger.error(
+                    f"Server closed connection unexpectedly while reading: {e}"
+                )
             await self.close()
-            raise ConnectionError("LSP connection closed unexpectedly.") from e # Raise to signal failure
+            raise ConnectionError(
+                "LSP connection closed unexpectedly."
+            ) from e  # Raise to signal failure
         except json.JSONDecodeError as e:
             logger.error(
-                f"Failed to decode JSON from server: {e}\nReceived Body: {json_body_str!r}"
+                f"Failed to decode JSON from server: {e}\n"
+                f"Received Body: {json_body_str!r}"
             )
-            return None # Don't raise, just log and return None for this message
-        except ValueError as e: # Catch header parsing errors like long header
-             logger.error(f"Error parsing LSP message header: {e}. Header received: {header_str!r}")
-             await self.close()
-             return None
+            return None  # Don't raise, just log and return None for this message
+        except ValueError as e:  # Catch header parsing errors like long header
+            logger.error(
+                f"Error parsing LSP message header: {e}. "
+                f"Header received: {header_str!r}"
+            )
+            await self.close()
+            return None
         except Exception as e:
             if not self._closed:
                 logger.exception(f"Error reading or processing LSP message: {e}")
-            await self.close() # Close on unexpected errors
-            raise ConnectionError(f"Unexpected error reading LSP message: {e}") from e # Raise
+            await self.close()  # Close on unexpected errors
+            raise ConnectionError(
+                f"Unexpected error reading LSP message: {e}"
+            ) from e  # Raise
 
     async def _message_reader_loop(self) -> None:
         """Continuously reads and dispatches messages from the server's stdout.
@@ -452,58 +480,90 @@ class LeanLspClient:
         try:
             # Ensure process is running and we haven't initiated close
             while self.process and self.process.returncode is None and not self._closed:
-                message = None # Reset message for each loop iteration
+                message = None  # Reset message for each loop iteration
                 try:
                     message = await self._read_message()
-                except ConnectionError: # Raised by _read_message on critical errors
+                except ConnectionError:  # Raised by _read_message on critical errors
                     logger.warning("Connection error in reader loop. Exiting.")
-                    break # Exit the loop cleanly
+                    break  # Exit the loop cleanly
 
                 if message is None:
                     # Check if connection still seems valid or if we are closing
-                    if not self._closed and self.process and self.process.returncode is None:
+                    if (
+                        not self._closed
+                        and self.process
+                        and self.process.returncode is None
+                    ):
                         logger.warning(
                             "Message reader received None, but connection appears "
-                            "active. Possible parse error or unexpected server behavior."
+                            "active. Possible parse error or unexpected server "
+                            "behavior."
                         )
                         # Optional: add a small delay before retrying?
                         # await asyncio.sleep(0.1)
                     else:
-                        logger.info("Message reader received None, likely connection closed. Exiting loop.")
-                        break # Exit loop if read fails or connection closing
+                        logger.info(
+                            "Message reader received None, likely connection closed. "
+                            "Exiting loop."
+                        )
+                        break  # Exit loop if read fails or connection closing
 
                 # ----- Message Processing Logic -----
                 # Avoid processing if message is None
                 if message:
                     msg_id = message.get("id")
                     msg_method = message.get("method")
-                    request_id = None # Initialize request_id for potential use in error handling
+                    # Initialize request_id for potential use in error handling
+                    request_id = None
 
                     # --- Case 1: Response to our request ---
                     # Has 'id', does NOT have 'method'. Our client uses integer IDs.
                     if msg_id is not None and msg_method is None:
                         try:
-                            request_id = int(msg_id) # Convert expected integer ID
+                            request_id = int(msg_id)  # Convert expected integer ID
                             if request_id in self._pending_requests:
                                 future = self._pending_requests.pop(request_id)
                                 if not future.cancelled():
                                     if "error" in message:
-                                        logger.debug(f"Received error response for ID {request_id}")
-                                        future.set_exception(LspResponseError(message["error"]))
+                                        logger.debug(
+                                            "Received error response for ID "
+                                            f"{request_id}"
+                                        )
+                                        future.set_exception(
+                                            LspResponseError(message["error"])
+                                        )
                                     else:
-                                        logger.debug(f"Received result response for ID {request_id}")
+                                        logger.debug(
+                                            "Received result response for ID "
+                                            f"{request_id}"
+                                        )
                                         future.set_result(message.get("result"))
                                 else:
-                                    logger.warning(f"Received response for already cancelled request ID {request_id}")
+                                    logger.warning(
+                                        "Received response for already cancelled "
+                                        f"request ID {request_id}"
+                                    )
                             else:
-                                # Could be response to request that already timed out/cancelled
-                                logger.warning(f"Received response for ID {request_id}, but it was not pending.")
+                                # Could be response to request that already timed
+                                # out/cancelled
+                                logger.warning(
+                                    f"Received response for ID {request_id}, but "
+                                    "it was not pending."
+                                )
                         except ValueError:
-                            logger.warning(f"Received response with non-integer ID '{msg_id}', ignoring.")
+                            logger.warning(
+                                f"Received response with non-integer ID '{msg_id}', "
+                                "ignoring."
+                            )
                         except Exception as e:
-                            logger.exception(f"Error processing response for ID {msg_id}: {e}")
+                            logger.exception(
+                                f"Error processing response for ID {msg_id}: {e}"
+                            )
                             # Ensure future is removed if error occurs during processing
-                            if request_id is not None and request_id in self._pending_requests:
+                            if (
+                                request_id is not None
+                                and request_id in self._pending_requests
+                            ):
                                 future = self._pending_requests.pop(request_id)
                                 if not future.done():
                                     future.set_exception(e)
@@ -513,34 +573,50 @@ class LeanLspClient:
                     elif msg_method is not None and msg_id is None:
                         logger.debug(f"Received notification: {msg_method}")
                         # We only queue specific notifications we might care about
-                        if msg_method in ["textDocument/publishDiagnostics", "$/lean/fileProgress"]:
-                             logger.debug(f"Queueing notification '{msg_method}'. Queue size approx: {self._notifications_queue.qsize() + 1}")
-                             await self._notifications_queue.put(message)
+                        if msg_method in [
+                            "textDocument/publishDiagnostics",
+                            "$/lean/fileProgress",
+                        ]:
+                            q_size = self._notifications_queue.qsize() + 1
+                            logger.debug(
+                                f"Queueing notification '{msg_method}'. "
+                                f"Queue size approx: {q_size}"
+                            )
+                            await self._notifications_queue.put(message)
                         else:
-                            logger.debug(f"Ignoring unhandled notification: {msg_method}")
+                            logger.debug(
+                                f"Ignoring unhandled notification: {msg_method}"
+                            )
 
                     # --- Case 3: Request from server ---
                     # Has 'method' AND 'id'. The server wants US to do something.
                     elif msg_method is not None and msg_id is not None:
-                        logger.warning(f"Received request from server (Method: {msg_method}, ID: {msg_id}). Ignoring.")
+                        logger.warning(
+                            "Received request from server "
+                            f"(Method: {msg_method}, ID: {msg_id}). Ignoring."
+                        )
                         # A fully compliant client might send back MethodNotFound error.
 
                     # --- Case 4: Unknown message structure ---
                     else:
-                        logger.warning(f"Received message with unknown structure: {message}")
+                        logger.warning(
+                            f"Received message with unknown structure: {message}"
+                        )
 
         except asyncio.CancelledError:
             logger.info("LSP message reader loop cancelled.")
         except Exception as e:
             # Log unexpected errors in the loop itself
-            if not self._closed: # Avoid logging errors during graceful shutdown
+            if not self._closed:  # Avoid logging errors during graceful shutdown
                 logger.exception(f"Unexpected error in LSP message reader loop: {e}")
         finally:
             logger.info("LSP message reader loop finished.")
             # Cancel any remaining pending requests when the loop exits
             for req_id, future in list(self._pending_requests.items()):
                 if not future.done():
-                    future.cancel(f"LSP reader loop exited while request {req_id} was pending.")
+                    future.cancel(
+                        f"LSP reader loop exited while request {req_id} was pending."
+                    )
                 self._pending_requests.pop(req_id, None)
 
     async def _write_message(self, message: Dict[str, Any]) -> None:
@@ -568,7 +644,11 @@ class LeanLspClient:
 
         try:
             json_body = json.dumps(message).encode("utf-8")
-            header = CONTENT_LENGTH_HEADER + str(len(json_body)).encode('ascii') + HEADER_SEPARATOR
+            header = (
+                CONTENT_LENGTH_HEADER
+                + str(len(json_body)).encode("ascii")
+                + HEADER_SEPARATOR
+            )
 
             # logger.debug(f"LSP Sending: {json.dumps(message, indent=2)}") # Verbose
             self.writer.write(header)
@@ -576,11 +656,11 @@ class LeanLspClient:
             await self.writer.drain()
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.error(f"Connection error writing LSP message: {e}")
-            await self.close() # Close connection on write failure
+            await self.close()  # Close connection on write failure
             raise ConnectionError(f"Connection error writing LSP message: {e}") from e
         except Exception as e:
             logger.exception(f"Error writing LSP message: {e}")
-            await self.close() # Close on other write errors too
+            await self.close()  # Close on other write errors too
             raise ConnectionError(f"Error writing LSP message: {e}") from e
 
     async def send_request(
@@ -621,7 +701,7 @@ class LeanLspClient:
         if self._closed:
             raise ConnectionError("Client is closed.")
         if not self.process or self.process.returncode is not None:
-             raise ConnectionError("Lean server process is not running.")
+            raise ConnectionError("Lean server process is not running.")
 
         request_id = self._message_id_counter
         self._message_id_counter += 1
@@ -629,7 +709,7 @@ class LeanLspClient:
             "jsonrpc": "2.0",
             "id": request_id,
             "method": method,
-            "params": params if params is not None else {}, # Ensure params is dict
+            "params": params if params is not None else {},  # Ensure params is dict
         }
         future: asyncio.Future = self._get_loop().create_future()
         self._pending_requests[request_id] = future
@@ -640,33 +720,46 @@ class LeanLspClient:
             # Wait for the future associated with this request ID
             return await asyncio.wait_for(future, timeout=self.timeout)
         except asyncio.TimeoutError:
-            logger.error(f"Timeout waiting for response to request {request_id} ({method}).")
+            logger.error(
+                f"Timeout waiting for response to request {request_id} ({method})."
+            )
             # Clean up pending request if timed out
             pending_future = self._pending_requests.pop(request_id, None)
             if pending_future and not pending_future.done():
-                pending_future.cancel(f"Timeout waiting for response to request {request_id}")
-            raise # Re-raise timeout
+                pending_future.cancel(
+                    f"Timeout waiting for response to request {request_id}"
+                )
+            raise  # Re-raise timeout
         except asyncio.CancelledError:
             logger.warning(f"Request {request_id} ({method}) was cancelled.")
             # Ensure cleanup if cancelled externally
-            self._pending_requests.pop(request_id, None) # Future might already be removed by reader loop
-            raise # Re-raise cancellation
-        except LspResponseError as e: # If future gets an error set by reader loop
-             logger.warning(f"Request {request_id} ({method}) failed with LSP Error: {e}")
-             # No need to cleanup future here, reader loop already did
-             raise # Re-raise LspResponseError
-        except ConnectionError as e: # Connection error during write or read
-             logger.error(f"Connection error during request {request_id} ({method}): {e}")
-             self._pending_requests.pop(request_id, None) # Clean up future
-             raise # Re-raise ConnectionError
-        except Exception as e: # Other unexpected errors
-            logger.exception(f"Unexpected error sending request {request_id} ({method}) or awaiting response: {e}")
+            self._pending_requests.pop(
+                request_id, None
+            )  # Future might already be removed by reader loop
+            raise  # Re-raise cancellation
+        except LspResponseError as e:  # If future gets an error set by reader loop
+            logger.warning(
+                f"Request {request_id} ({method}) failed with LSP Error: {e}"
+            )
+            # No need to cleanup future here, reader loop already did
+            raise  # Re-raise LspResponseError
+        except ConnectionError as e:  # Connection error during write or read
+            logger.error(
+                f"Connection error during request {request_id} ({method}): {e}"
+            )
+            self._pending_requests.pop(request_id, None)  # Clean up future
+            raise  # Re-raise ConnectionError
+        except Exception as e:  # Other unexpected errors
+            logger.exception(
+                f"Unexpected error sending request {request_id} ({method}) "
+                f"or awaiting response: {e}"
+            )
             # Clean up future on other errors too
             pending_future = self._pending_requests.pop(request_id, None)
             if pending_future and not pending_future.done():
-                 # If future wasn't cancelled/set_exception'd by reader loop yet
-                 pending_future.set_exception(e)
-            raise # Re-raise original error
+                # If future wasn't cancelled/set_exception'd by reader loop yet
+                pending_future.set_exception(e)
+            raise  # Re-raise original error
 
     async def send_notification(
         self, method: str, params: Optional[Dict[str, Any]] = None
@@ -691,12 +784,12 @@ class LeanLspClient:
         if self._closed:
             raise ConnectionError("Client is closed.")
         if not self.process or self.process.returncode is not None:
-             raise ConnectionError("Lean server process is not running.")
+            raise ConnectionError("Lean server process is not running.")
 
         notification = {
             "jsonrpc": "2.0",
             "method": method,
-            "params": params if params is not None else {}, # Ensure params is dict
+            "params": params if params is not None else {},  # Ensure params is dict
         }
         logger.debug(f"Sending notification: {method}")
         await self._write_message(notification)
@@ -733,17 +826,17 @@ class LeanLspClient:
                         "dynamicRegistration": False,
                         "willSave": False,
                         "willSaveWaitUntil": False,
-                        "didSave": True, # We will send didOpen/didChange/didSave
+                        "didSave": True,  # We will send didOpen/didChange/didSave
                         "didOpen": True,
                     },
                     "publishDiagnostics": {"relatedInformation": True},
                     # If we need hover, completion etc., add capabilities here
                 },
                 "workspace": {
-                     "workspaceFolders": True # Indicate support for workspace folders
+                    "workspaceFolders": True  # Indicate support for workspace folders
                 },
             },
-            "trace": "off", # Set to "verbose" for more LSP logging if needed
+            "trace": "off",  # Set to "verbose" for more LSP logging if needed
             "workspaceFolders": [
                 {
                     "uri": pathlib.Path(self.cwd).as_uri(),
@@ -755,17 +848,19 @@ class LeanLspClient:
         }
         try:
             response = await self.send_request("initialize", init_params)
-            logger.info("Received initialize response. Sending initialized notification.")
+            logger.info(
+                "Received initialize response. Sending initialized notification."
+            )
             await self.send_notification("initialized", {})
             logger.info("LSP Handshake Complete.")
-            # Extract server capabilities, default to empty dict if 'result' is null or missing
+            # Extract server capabilities, default to empty dict if 'result' is null
+            # or missing
             server_capabilities = response.get("capabilities", {}) if response else {}
             return server_capabilities
         except Exception as e:
             logger.exception(f"LSP Initialization failed: {e}")
-            await self.close() # Ensure cleanup on failure
+            await self.close()  # Ensure cleanup on failure
             raise ConnectionError(f"LSP Initialization failed: {e}") from e
-
 
     async def did_open(
         self, file_uri: str, language_id: str, version: int, text: str
@@ -829,20 +924,25 @@ class LeanLspClient:
         }
         try:
             result = await self.send_request(method, params)
-            # logger.debug(f"Received result for get_goal({line}:{character}): {result!r}")
-            return result # Result can be None if server sends null result
+            # logger.debug(f"Received result for get_goal({line}:{character}): "
+            #              f"{result!r}")
+            return result  # Result can be None if server sends null result
         except LspResponseError as e:
             logger.warning(f"{method} request failed for {line}:{character}: {e}")
-            return None # Return None on LSP error responses
+            return None  # Return None on LSP error responses
         except asyncio.TimeoutError:
             logger.error(f"{method} request timed out for {line}:{character}")
-            return None # Return None on timeout
+            return None  # Return None on timeout
         except ConnectionError:
-            logger.error(f"Connection error during {method} request for {line}:{character}.")
-            return None # Return None if connection failed
-        except Exception as e: # Catch other unexpected errors
-            logger.error(f"Unexpected error sending {method} request for {line}:{character}: {e}")
-            return None # Return None on other errors
+            logger.error(
+                f"Connection error during {method} request for {line}:{character}."
+            )
+            return None  # Return None if connection failed
+        except Exception as e:  # Catch other unexpected errors
+            logger.error(
+                f"Unexpected error sending {method} request for {line}:{character}: {e}"
+            )
+            return None  # Return None on other errors
 
     async def shutdown(self) -> None:
         """Sends the `shutdown` request to the server.
@@ -863,7 +963,9 @@ class LeanLspClient:
             logger.info("LSP shutdown request acknowledged by server.")
         except (ConnectionError, asyncio.TimeoutError, LspResponseError) as e:
             # Log error but proceed to exit/close anyway
-            logger.warning(f"Error during LSP shutdown request (proceeding to exit/close): {e}")
+            logger.warning(
+                f"Error during LSP shutdown request (proceeding to exit/close): {e}"
+            )
         except Exception as e:
             logger.exception(f"Unexpected error during shutdown request: {e}")
 
@@ -877,23 +979,30 @@ class LeanLspClient:
         already terminated) are logged as warnings.
         """
         if self._closed or not self.process or self.process.returncode is not None:
-             # Avoid sending exit if server already stopped or client closing
-             if not self._closed:
-                  logger.debug("Skipping exit notification as server process is not running.")
-             return
+            # Avoid sending exit if server already stopped or client closing
+            if not self._closed:
+                logger.debug(
+                    "Skipping exit notification as server process is not running."
+                )
+            return
 
         logger.info("Sending LSP exit notification.")
         try:
             # Exit is a notification, no response expected
             await self.send_notification("exit")
         except ConnectionError as e:
-            # Server might have already exited after shutdown acknowledgement, this is okay
-            logger.warning(f"Connection error during LSP exit notification (may be expected if server stopped quickly): {e}")
+            # Server might have already exited after shutdown acknowledgement,
+            # this is okay
+            logger.warning(
+                "Connection error during LSP exit notification "
+                f"(may be expected if server stopped quickly): {e}"
+            )
         except Exception as e:
             logger.exception(f"Unexpected error during exit notification: {e}")
 
     async def close(self) -> None:
-        """Closes the LSP client connection and terminates the server process gracefully.
+        """Closes the LSP client connection and terminates the server process
+        gracefully.
 
         This method performs the following steps:
         1. Marks the client as closed (`self._closed = True`).
@@ -905,17 +1014,19 @@ class LeanLspClient:
         5. Closes the stdin writer stream (`self.writer`).
         6. If the server process is still running, attempts to terminate it using
            `process.terminate()`. Waits briefly for termination.
-        7. If termination times out, forcefully kills the process using `process.kill()`.
+        7. If termination times out, forcefully kills the process using
+           `process.kill()`.
         8. Cleans up any remaining pending request Futures by cancelling them.
         9. Waits for the cancelled reader and stderr tasks to complete.
-        10. Sets internal state variables (`process`, `writer`, `reader`, tasks) to None.
+        10. Sets internal state variables (`process`, `writer`, `reader`, tasks)
+            to None.
 
         This method is idempotent; calling it multiple times will have no further effect
         after the first call.
         """
         if self._closed:
             return
-        self._closed = True # Mark as closed immediately to prevent race conditions
+        self._closed = True  # Mark as closed immediately to prevent race conditions
         logger.info("Closing LSP client connection and terminating server.")
 
         # 1. Graceful shutdown sequence (if process still seems alive)
@@ -923,17 +1034,25 @@ class LeanLspClient:
             try:
                 # Try shutdown first (with a shorter timeout than default request)
                 await asyncio.wait_for(self.shutdown(), timeout=5.0)
-            except (ConnectionError, asyncio.TimeoutError, LspResponseError, Exception) as shutdown_e:
-                logger.warning(f"Graceful shutdown failed or timed out ({shutdown_e}), proceeding.")
+            except (
+                ConnectionError,
+                asyncio.TimeoutError,
+                LspResponseError,
+                Exception,
+            ) as shutdown_e:
+                logger.warning(
+                    f"Graceful shutdown failed or timed out ({shutdown_e}), proceeding."
+                )
 
             try:
-                 # Send exit regardless of shutdown success
-                 await self.exit()
-                 # Give a brief moment for exit to potentially be processed
-                 await asyncio.sleep(0.1)
+                # Send exit regardless of shutdown success
+                await self.exit()
+                # Give a brief moment for exit to potentially be processed
+                await asyncio.sleep(0.1)
             except (ConnectionError, Exception) as exit_e:
-                 logger.warning(f"Error sending exit notification during close: {exit_e}")
-
+                logger.warning(
+                    f"Error sending exit notification during close: {exit_e}"
+                )
 
         # 2. Cancel reader/stderr tasks
         if self._reader_task and not self._reader_task.done():
@@ -950,11 +1069,12 @@ class LeanLspClient:
             except Exception as e:
                 logger.warning(f"Error closing LSP writer: {e}")
         self.writer = None
-        self.reader = None # Reader is associated with the process stdout pipe, closing pipe handles it
+        # Reader is associated with the process stdout pipe, closing pipe handles it
+        self.reader = None
 
         # 4. Terminate process if still running after graceful attempts
-        proc = self.process # Capture process locally
-        self.process = None # Nullify instance variable
+        proc = self.process  # Capture process locally
+        self.process = None  # Nullify instance variable
         if proc and proc.returncode is None:
             logger.info("Terminating lean server process...")
             try:
@@ -963,20 +1083,24 @@ class LeanLspClient:
                 return_code = await asyncio.wait_for(proc.wait(), timeout=5.0)
                 logger.info(f"Lean server process terminated with code {return_code}.")
             except asyncio.TimeoutError:
-                logger.warning("Lean server process did not terminate gracefully after 5s, killing.")
+                logger.warning(
+                    "Lean server process did not terminate gracefully after 5s, "
+                    "killing."
+                )
                 try:
                     proc.kill()
-                    await proc.wait() # Wait for kill completion
+                    await proc.wait()  # Wait for kill completion
                     logger.info("Lean server process killed.")
                 except ProcessLookupError:
                     logger.warning("Process already killed or finished.")
                 except Exception as kill_e:
                     logger.error(f"Error killing lean process: {kill_e}")
             except ProcessLookupError:
-                logger.warning("Process already finished before final termination attempt.")
+                logger.warning(
+                    "Process already finished before final termination attempt."
+                )
             except Exception as e:
                 logger.error(f"Error during lean server process termination: {e}")
-
 
         # 5. Clear any remaining pending requests
         for req_id, future in list(self._pending_requests.items()):
@@ -986,17 +1110,17 @@ class LeanLspClient:
 
         # 6. Wait for tasks to finish cancellation
         try:
-             tasks_to_wait = []
-             if self._reader_task:
-                 tasks_to_wait.append(self._reader_task)
-             if self._stderr_task:
-                 tasks_to_wait.append(self._stderr_task)
+            tasks_to_wait = []
+            if self._reader_task:
+                tasks_to_wait.append(self._reader_task)
+            if self._stderr_task:
+                tasks_to_wait.append(self._stderr_task)
 
-             if tasks_to_wait:
-                 await asyncio.gather(*tasks_to_wait, return_exceptions=True)
-                 logger.debug("Reader and stderr tasks finished after cancellation.")
+            if tasks_to_wait:
+                await asyncio.gather(*tasks_to_wait, return_exceptions=True)
+                logger.debug("Reader and stderr tasks finished after cancellation.")
         except Exception as e:
-             logger.warning(f"Exception during task cleanup: {e}")
+            logger.warning(f"Exception during task cleanup: {e}")
 
         self._reader_task = None
         self._stderr_task = None
@@ -1031,48 +1155,73 @@ class LeanLspClient:
         """
         diagnostics_params = []
         first_attempt = True
-        drain_timeout = 0.01 # Use a very small timeout for subsequent checks
+        drain_timeout = 0.01  # Use a very small timeout for subsequent checks
 
-        logger.debug(f"Entering get_diagnostics. Approx queue size: {self._notifications_queue.qsize()}")
+        logger.debug(
+            "Entering get_diagnostics. Approx queue size: "
+            f"{self._notifications_queue.qsize()}"
+        )
 
         while True:
             current_timeout = timeout if first_attempt else drain_timeout
-            first_attempt = False # Use drain_timeout after the first attempt
+            first_attempt = False  # Use drain_timeout after the first attempt
 
             try:
                 # Wait for an item with the current timeout
                 notification = await asyncio.wait_for(
                     self._notifications_queue.get(), timeout=current_timeout
                 )
-                logger.debug(f"Retrieved notification from queue: method='{notification.get('method')}'")
+                logger.debug(
+                    "Retrieved notification from queue: "
+                    f"method='{notification.get('method')}'"
+                )
 
                 if notification.get("method") == "textDocument/publishDiagnostics":
                     params = notification.get("params", {})
                     # Extract the list of diagnostic items
                     diags_list = params.get("diagnostics", [])
                     # We return the list of individual diagnostic objects
-                    if diags_list: # Only add if there are actual diagnostics
-                         logger.debug(f"Extending with {len(diags_list)} diagnostics from notification for URI {params.get('uri')}.")
-                         diagnostics_params.extend(diags_list)
+                    if diags_list:  # Only add if there are actual diagnostics
+                        uri = params.get("uri")
+                        logger.debug(
+                            f"Extending with {len(diags_list)} diagnostics from "
+                            f"notification for URI {uri}."
+                        )
+                        diagnostics_params.extend(diags_list)
                     else:
-                         logger.debug(f"Notification contained empty diagnostics list for URI {params.get('uri')}.")
+                        uri = params.get("uri")
+                        logger.debug(
+                            "Notification contained empty diagnostics list "
+                            f"for URI {uri}."
+                        )
 
                 # Ignore other notification types like $/lean/fileProgress here
-                # else: logger.debug(f"Ignoring notification type: {notification.get('method')}")
+                # else: logger.debug("Ignoring notification type: "
+                #                    f"{notification.get('method')}")
 
                 self._notifications_queue.task_done()
 
             except asyncio.TimeoutError:
                 # This is the expected way to exit when the queue is empty
-                logger.debug(f"Queue appears empty (timeout={current_timeout}s). Exiting diagnostic collection.")
+                logger.debug(
+                    f"Queue appears empty (timeout={current_timeout}s). "
+                    "Exiting diagnostic collection."
+                )
                 break
-            except asyncio.QueueEmpty: # Should be caught by TimeoutError, but just in case
-                 logger.debug(f"Queue empty exception. Exiting diagnostic collection.")
-                 break
+            except (
+                asyncio.QueueEmpty
+            ):  # Should be caught by TimeoutError, but just in case
+                logger.debug("Queue empty exception. Exiting diagnostic collection.")
+                break
             except Exception as e:
-                logger.error(f"Error getting diagnostics from queue: {e}", exc_info=True)
-                break # Exit loop on unexpected errors
+                logger.error(
+                    f"Error getting diagnostics from queue: {e}", exc_info=True
+                )
+                break  # Exit loop on unexpected errors
 
-        logger.debug(f"Exiting get_diagnostics. Total collected diagnostic items: {len(diagnostics_params)}")
+        logger.debug(
+            "Exiting get_diagnostics. Total collected diagnostic items: "
+            f"{len(diagnostics_params)}"
+        )
         # Return the list of individual diagnostic objects
         return diagnostics_params

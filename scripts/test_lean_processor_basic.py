@@ -34,26 +34,16 @@ if project_root not in sys.path:
 
 # --- Module Imports ---
 try:
-    from src.lean_automator.kb import storage as kb_storage
-    from src.lean_automator.kb.storage import ItemStatus, ItemType
-    from src.lean_automator.lean import interaction as lean_interaction
-    from src.lean_automator.lean import processor as lean_processor
-    from src.lean_automator.llm import caller as llm_call
-except ImportError:
-    # Fallback if running as installed package
-    try:
-        from lean_automator.kb import storage as kb_storage
-        from lean_automator.kb.storage import ItemStatus, ItemType
-        from lean_automator.lean import interaction as lean_interaction
-        from lean_automator.lean import processor as lean_processor
-        from lean_automator.llm import caller as llm_call
-    except ImportError as e:
-        print(f"Error importing project modules: {e}")
-        print(
-            "Ensure the script is run from the project root or the package is "
-            "installed."
-        )
-        sys.exit(1)
+    # Import relative to project root (src directory contains packages)
+    from lean_automator.kb import storage as kb_storage
+    from lean_automator.kb.storage import ItemStatus, ItemType
+    from lean_automator.lean import interaction as lean_interaction
+    from lean_automator.lean import processor as lean_processor
+    from lean_automator.llm import caller as llm_call
+except ImportError as e:
+    print(f"Error importing project modules: {e}")
+    print("Ensure the script is run from the project root or the package is installed.")
+    sys.exit(1)
 
 # --- Configuration ---
 TEST_DB_PATH = "./test_lean_proc_list_kb.sqlite"  # Use dedicated DB file for this test
