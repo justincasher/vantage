@@ -53,10 +53,13 @@ nav:
     - 'LaTeX':
         - 'LaTeX Processor': 'reference/latex/processor.md'
     - 'Lean':
-        - 'Lean Interaction': 'reference/lean/interaction.md'
-        - 'Lean LSP Analyzer': 'reference/lean/lsp_analyzer.md'
-        - 'Lean Processor': 'reference/lean/processor.md'
-        - 'Lean Proof Repair': 'reference/lean/proof_repair.md'
+        - 'Lean Interaction': 'reference/lean/interaction.md'    
+        - 'Lean Processor': 'reference/lean/processor.md'       
+        - 'Lean LLM Interface': 'reference/lean/llm_interface.md' 
+        - 'Lean Prompts': 'reference/lean/prompts.md'            
+        - 'Lean Proof Repair': 'reference/lean/proof_repair.md'  
+        - 'Lean LSP Client': 'reference/lean/lsp_client.md' 
+        - 'Lean LSP Analyzer': 'reference/lean/lsp_analyzer.md' 
     - 'LLM':
         - 'LLM Caller': 'reference/llm/caller.md'
   - 'Contributing':

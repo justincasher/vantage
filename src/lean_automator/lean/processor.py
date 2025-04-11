@@ -4,30 +4,22 @@
 
 This module manages the process of generating formal Lean 4 code (both statement
 signatures and proofs) for mathematical items (`KBItem`) stored in the knowledge
-base. It interacts with an LLM client (`GeminiClient`) to generate the code based
-on LaTeX statements, informal proofs, and dependency context.
+base. It interacts with an LLM client (`GeminiClient`) via the `llm_interface`
+module to generate the code based on LaTeX statements, informal proofs, and
+dependency context.
 
-The core logic involves:
-
-1. Generating a Lean statement signature (`... := sorry`).
-
-2. If the item requires proof, generating Lean proof tactics to replace `sorry`.
-
-3. Calling the `lean_interaction` module to verify the generated code using `lake`
-    in a temporary environment that requires a persistent shared library.
-
-4. Handling retries for LLM generation and potentially invoking proof repair logic.
-
-5. Updating the `KBItem` status and content in the database based on the outcome.
-
-6. Providing batch processing capabilities for items pending Lean processing.
+The core logic, orchestrated by `generate_and_verify_lean`, involves:
+1. Checking prerequisites and dependencies (`_check_prerequisites_and_dependencies`).
+2. Generating a Lean statement signature (`_generate_statement_shell`).
+3. Generating and verifying Lean proof tactics (`_generate_and_verify_proof`).
+4. Updating the KBItem status and content throughout the process.
+5. Providing batch processing capabilities (`process_pending_lean_items`).
 """
 
 import logging
-import re
 import time
 import warnings
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # --- Imports from other project modules ---
 try:
@@ -38,6 +30,42 @@ except ImportError:
         ImportWarning,
     )
     APP_CONFIG = {}  # Provide an empty dict as a fallback
+
+# Setup logger early for critical failures during imports
+logging.basicConfig(level=logging.INFO)  # Basic config if logger not set up yet
+logger = logging.getLogger(__name__)
+
+try:
+    # Prompts are now external (imports not used directly, loaded by llm_interface)
+    _ = None  # Placeholder to potentially load prompts.py if needed later
+except ImportError as e:
+    logger.critical(
+        "FATAL: Failed to import required prompt templates from "
+        "lean_automator.lean.prompts. "
+        "The Lean processor cannot function without these prompts. "
+        "Ensure 'prompts.py' exists in the same directory as 'processor.py'. "
+        f"Original error: {e}"
+    )
+    raise ImportError(
+        "Essential prompt templates could not be loaded from "
+        "lean_automator.lean.prompts. Processor cannot start."
+    ) from e
+
+try:
+    # LLM interaction logic is now external
+    from . import llm_interface
+except ImportError as e:
+    logger.critical(
+        "FATAL: Failed to import required LLM interface functions from "
+        "lean_automator.lean.llm_interface. "
+        "The Lean processor cannot function without these. "
+        "Ensure 'llm_interface.py' exists in the same directory as 'processor.py'. "
+        f"Original error: {e}"
+    )
+    raise ImportError(
+        "Essential LLM interface functions could not be loaded from "
+        "lean_automator.lean.llm_interface."
+    ) from e
 
 try:
     from lean_automator.kb.storage import (
@@ -57,28 +85,35 @@ try:
 except ImportError as e:
     warnings.warn(f"lean_processor: Required modules not found: {e}")
     # Define dummy types/functions to allow script loading without crashing
-    KBItem = None
-    ItemStatus = None
-    ItemType = None
-    get_kb_item_by_name = None
-    save_kb_item = None
-    get_items_by_status = None
-    GeminiClient = None
+    KBItem = type("DummyKBItem", (object,), {})
+    ItemStatus = type("DummyItemStatus", (object,), {})  # type: ignore
+    ItemType = type("DummyItemType", (object,), {})  # type: ignore
+
+    def _dummy_get_kb_item_by_name(name, path):
+        return None
+
+    get_kb_item_by_name = _dummy_get_kb_item_by_name  # type: ignore
+
+    def _dummy_save_kb_item(item, client, db_path):
+        return None
+
+    save_kb_item = _dummy_save_kb_item  # type: ignore
+
+    def _dummy_get_items_by_status(status, path):
+        return iter([])
+
+    get_items_by_status = _dummy_get_items_by_status  # type: ignore
+    GeminiClient = type("DummyGeminiClient", (object,), {})  # type: ignore
     DEFAULT_DB_PATH = None
     lean_interaction = None
-    lean_proof_repair = None  # type: ignore
-
-# --- Logging ---
-logger = logging.getLogger(__name__)
+    lean_proof_repair = None
 
 # --- Constants ---
 DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS = 2
 DEFAULT_LEAN_PROOF_MAX_ATTEMPTS = 3
 
 # Get configuration safely from APP_CONFIG with fallbacks to defaults
-lean_config = APP_CONFIG.get(
-    "lean_processing", {}
-)  # Get the lean_processing section, or empty dict
+lean_config = APP_CONFIG.get("lean_processing", {})
 
 LEAN_STATEMENT_MAX_ATTEMPTS = lean_config.get(
     "statement_max_attempts", DEFAULT_LEAN_STATEMENT_MAX_ATTEMPTS
@@ -108,594 +143,561 @@ logger.info(f"Using LEAN_STATEMENT_MAX_ATTEMPTS = {LEAN_STATEMENT_MAX_ATTEMPTS}"
 logger.info(f"Using LEAN_PROOF_MAX_ATTEMPTS = {LEAN_PROOF_MAX_ATTEMPTS}")
 
 
-# --- Prompt Templates ---
-# Prompts remain the same - they already instructed the LLM NOT to write
-# dependency imports.
-LEAN_STATEMENT_GENERATOR_PROMPT = """
-You are an expert Lean 4 programmer translating mathematical statements into
-formal Lean code. **You are working in a restricted environment with ONLY the
-Lean 4 prelude and explicitly provided dependencies.**
-
-**Goal:** Generate the Lean 4 statement signature (including necessary standard
-imports if absolutely needed, usually none) for the item named `{unique_name}`
-({item_type_name}), based on its LaTeX statement.
-
-**LaTeX Statement:**
---- BEGIN LATEX STATEMENT ---
-{latex_statement}
---- END LATEX STATEMENT ---
-
-**Available Proven Dependencies (For Context - Names and Types):**
-{dependency_context_for_statement}
-
-**Refinement Feedback (If Applicable):**
-{statement_error_feedback}
-
-**Instructions:**
-1.  Translate the LaTeX Statement into a formal Lean 4 theorem/definition
-    signature (e.g., `theorem MyTheorem (n : Nat) : ...`). **IMPORTANT: Choose
-    a Lean formulation that uses ONLY features available in the standard Lean 4
-    prelude (like basic types `Nat`, `List`, `Prop`, `Type`, logical connectives
-    `∀`, `∃`, `∧`, `∨`, `¬`, basic arithmetic `+`, `*`, `>`, `=`, induction
-    principles) and the provided dependencies.** For example, expressing
-    'infinitely many primes' as `∀ n, ∃ p > n, Nat.IsPrime p` is preferred over
-    using `Set.Infinite` which requires extra libraries.
-2.  Include necessary minimal standard imports ONLY if required beyond the
-    prelude (e.g., often no imports are needed). **DO NOT generate imports for
-    the dependencies listed above; they will be handled automatically.**
-3.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless
-    explicitly provided in the dependencies.** Code relying on concepts like
-    `Set`, `Finset`, `Data.`, `Mathlib.` etc., is INCORRECT for this task.
-4.  Append ` := sorry` to the end of the statement signature.
-5.  Output **only** the Lean code containing any necessary standard imports and
-    the complete signature ending in `sorry`, marked between `--- BEGIN LEAN HEADER ---`
-    and `--- END LEAN HEADER ---`. Here is an example output:
-
---- BEGIN LEAN HEADER ---
-theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := sorry
---- END LEAN HEADER ---
-"""
-
-LEAN_PROOF_GENERATOR_PROMPT = """
-You are an expert Lean 4 programmer completing a formal proof. **You are
-working in a restricted environment with ONLY the Lean 4 prelude and explicitly
-provided dependencies.**
-
-**Goal:** Complete the Lean proof below by replacing `sorry`.
-
-**Lean Statement Shell (Target):**
---- BEGIN LEAN HEADER ---
-{lean_statement_shell}
---- END LEAN HEADER ---
-
-**Informal LaTeX Proof (Use as Guidance):**
-(This informal proof might contain errors, but use it as a guide for the formal
-Lean proof structure and steps.)
---- BEGIN LATEX PROOF ---
-{latex_proof}
---- END LATEX PROOF ---
-
-**Available Proven Dependencies (Lean Code):**
-(You MUST use these definitions and theorems. **Assume they are correctly
-imported automatically.**)
-{dependency_context_for_proof}
-
-**Previous Attempt Error (If Applicable):**
-(The previous attempt to compile the generated Lean code failed with the
-following error. Please fix the proof tactics.)
---- BEGIN LEAN ERROR ---
-{lean_error_log}
---- END LEAN ERROR ---
-
-**Instructions:**
-1.  Write the Lean 4 proof tactics to replace the `sorry` in the provided Lean
-    Statement Shell.
-2.  Ensure the proof strictly follows Lean 4 syntax and logic.
-3.  You have access ONLY to Lean 4 prelude features (basic types, logic,
-    induction, basic tactics like `rw`, `simp`, `intro`, `apply`, `exact`,
-    `have`, `let`, `by_contra`, `cases`, `induction`, `rfl`) and the 'Available
-    Proven Dependencies' provided above. **Use `simp` frequently to simplify
-    goals and unfold definitions (like the definition of `List.append` when
-    applied to `::`).** Use `rw [axiom_name]` or `rw [← axiom_name]` for
-    intermediate steps. **Do NOT try to `rw` using function names (like
-    `List.append`) or constructor names (like `List.cons`).**
-4.  **CRITICAL: DO NOT use or import ANYTHING from `mathlib` or `Std` unless
-    explicitly provided in the dependencies.** Code using `Set`, `Finset`,
-    advanced tactics (like `linarith`, `ring`), or library functions beyond the
-    prelude or provided dependencies is INCORRECT.
-5.  **CRITICAL: DO NOT generate any `import` statements. Assume necessary
-    dependency imports are already present.**
-6.  Use the Informal LaTeX Proof as a *guide* but prioritize formal correctness
-    using ONLY the allowed features.
-7.  Before significant tactics (`rw`, `simp` variants, `apply`, `induction`
-    steps, `cases`, `have`, `let`), add **two** comment lines in the following
-    format:
-    * `-- Goal: [Brief summary or key part of the current proof goal]`
-    * `-- Action: [Explain the planned tactic, which rule/hypothesis (like 'ih')
-       is used, and why (note rw ← if needed)]`
-* Do **not** add these comments for simple tactics like `rfl`, `exact ...`,
-  `done`, or simple structural syntax.
-* **Example:**
-    ```lean
-    -- Goal: List.reverse l' = List.append (List.reverse l') []
-    -- Action: Apply List.append_nil_ax to simplify the RHS
-    rw [List.append_nil_ax]
-    ```
-* **Example:**
-    ```lean
-    -- Goal: List.append (List.append A B) [x] = List.append A (List.reverse (x :: xs))
-    -- Action: Apply List.reverse_cons_ax to the RHS
-    rw [List.reverse_cons_ax]
-    ```
-* **Example:**
-    ```lean
-    -- Goal: List.reverse (xs ++ l') ++ [x] = ...
-    -- Action: Apply the induction hypothesis 'ih' to the LHS
-    rw [ih]
-    ```
-8.  **TACTIC NOTE (Reflexivity):** After applying tactics like `rw [...]` or
-    `simp [...]`, check if the resulting goal is of the form `X = X`. If it is,
-    the goal is solved by reflexivity. **DO NOT add `rfl` in this case.** Simply
-    proceed or end the branch. Avoid redundant tactics.
-9.  **TACTIC NOTE (Finishing with Axioms/Hypotheses):** If the goal is an
-    equality `LHS = RHS` and the *final* step is to apply a single axiom or
-    hypothesis `h : LHS = RHS` (or `h : RHS = LHS`), **prefer using `exact h`
-    (or `exact h.symm`)** instead of using `rw [h]` or `rw [← h]` as the very
-    last tactic for that goal branch. Use `rw` for intermediate steps.
-10. **Error Handling:** If fixing an error based on 'Previous Attempt Error',
-    carefully analyze the error message and modify the proof tactics
-    accordingly. **Do NOT change the theorem signature provided.**
-    * **Specifically for "no goals to be solved" errors:** If the error log
-      contains `error: ...:N:M: no goals to be solved` pointing to a line `N`
-      containing a tactic (like `rfl`), it almost always means the goal was
-      already solved implicitly by the tactic on the line *before* `N`. You
-      should **remove the superfluous tactic on line `N`** in your corrected
-      proof attempt.
-11. Ensure the proof block is correctly terminated (e.g., no stray `end`).
-12. Output **only** the complete Lean code block, including the *unchanged*
-    statement signature, and the full proof replacing sorry (with comments),
-    marked between `--- BEGIN LEAN CODE ---` and `--- END LEAN CODE ---`. Here is
-    an example output:
-
---- BEGIN LEAN CODE ---
-theorem MyTheorem (n : Nat) : Exists (m : Nat), m > n := by
-  -- Use existence introduction
-  apply Exists.intro (n + 1)
-  -- Apply the definition of successor and less than
-  simp [Nat.succ_eq_add_one, Nat.lt_succ_self]
---- END LEAN CODE ---
-"""
+# --- Helper Functions for Processing Steps ---
 
 
-# --- Helper Functions ---
-
-
-def _extract_lean_header(text: Optional[str]) -> Optional[str]:
-    """Extracts Lean header (signature ending in ':= sorry') from LLM output.
-
-    (Internal Helper)
-
-    Tries to parse the header using custom markers (`--- BEGIN/END LEAN HEADER ---`)
-    first, then falls back to parsing a strict markdown code block (` ```lean ... ``` `)
-    if markers are not found. Ensures the extracted header ends with `:= sorry`,
-    attempting to append it if missing.
+def _check_prerequisites_and_dependencies(
+    unique_name: str, db_path: str
+) -> Tuple[Optional[KBItem], List[KBItem], Optional[str]]:
+    """Fetches item, checks status, prerequisites, and dependency readiness.
 
     Args:
-        text (Optional[str]): The raw text output from the Lean statement generator LLM.
+        unique_name: The unique name of the KBItem to process.
+        db_path: Path to the knowledge base database file.
 
     Returns:
-        Optional[str]: The extracted and cleaned Lean header string ending in
-        `:= sorry`, or None if parsing fails or the input text is empty.
+        A tuple containing:
+        - The fetched KBItem if prerequisites are met so far, else None.
+        - A list of validated dependency KBItems (empty if failed).
+        - An error message string if checks fail, else None.
     """
-    if not text:
-        return None
-    header = None
-    stripped_text = text.strip()
-    # Try custom markers first
-    custom_marker_regex = (
-        r"---\s*BEGIN LEAN HEADER\s*---\s*(.*?)\s*---\s*END LEAN HEADER\s*---"
-    )
-    match_custom = re.search(
-        custom_marker_regex, stripped_text, re.DOTALL | re.IGNORECASE
-    )
-    if match_custom:
-        header = match_custom.group(1).strip()
-        logger.debug("Extracted header using custom markers.")
-    else:
-        logger.warning(
-            "Could not find '--- BEGIN/END LEAN HEADER ---' markers. "
-            "Trying strict markdown block..."
-        )
-        # Fallback: Try strict markdown block encompassing the whole response
-        markdown_regex_strict = r"^```lean\s*(.*?)\s*```$"
-        match_md = re.match(markdown_regex_strict, stripped_text, re.DOTALL)
-        if match_md:
-            header = match_md.group(1).strip()
-            logger.debug("Extracted header using strict markdown block.")
-        else:
-            logger.warning(
-                "Could not find strict markdown block ('```lean...```') "
-                "encompassing the whole response."
-            )
+    # Ensure necessary types/functions are loaded
+    if not all([KBItem, ItemStatus, ItemType, get_kb_item_by_name]):
+        return None, [], "Core KB types or functions not loaded."
 
-    # Post-process: Ensure it ends with ':= sorry'
-    if header:
-        stripped_header = header.rstrip()
-        # Remove trailing comments before checking/appending ':= sorry'
-        header_no_comments = re.sub(
-            r"\s*--.*$", "", stripped_header, flags=re.MULTILINE
-        ).rstrip()
+    # --- Initial Item Fetch and Status Checks ---
+    item = get_kb_item_by_name(unique_name, db_path)
+    if not item:
+        logger.error(f"Lean Proc: Item not found: {unique_name}")
+        return None, [], f"Item not found: {unique_name}"
 
-        if not header_no_comments.endswith(":= sorry"):
-            logger.warning(
-                "Parsed Lean header does not end with ':= sorry'. Attempting to append."
-            )
-            # Attempt to fix common near misses before just appending
-            if header_no_comments.endswith(" :="):
-                header = header_no_comments + " sorry"
-            elif header_no_comments.endswith(" :"):
-                header = header_no_comments + "= sorry"
-            else:  # Append directly if no obvious near miss
-                header = header_no_comments + " := sorry"
-        else:
-            # If it already ends correctly (after stripping comments),
-            # use the original (potentially with comments)
-            header = stripped_header
-
-        logger.debug(f"Final extracted/corrected header: '{header}'")
-        return header
-    else:
-        # Log error if extraction failed completely
-        logger.error(
-            "Failed to extract Lean header using any method. Raw text "
-            f"received: {repr(text)[:500]}..."
-        )
-        return None
-
-
-def _extract_lean_code(text: Optional[str]) -> Optional[str]:
-    """Extracts a block of Lean code from LLM output. (Internal Helper)
-
-    Tries to parse the code using custom markers (`--- BEGIN/END LEAN CODE ---`)
-    first, then falls back to parsing a strict markdown code block (` ```lean ... ``` `)
-    if markers are not found.
-
-    Args:
-        text (Optional[str]): The raw text output from the Lean proof generator LLM.
-
-    Returns:
-        Optional[str]: The extracted Lean code string (including statement and proof),
-        or None if parsing fails or the input text is empty.
-    """
-    if not text:
-        return None
-    code = None
-    stripped_text = text.strip()
-    # Try custom markers first
-    custom_marker_regex = (
-        r"---\s*BEGIN LEAN CODE\s*---\s*(.*?)\s*---\s*END LEAN CODE\s*---"
-    )
-    match_custom = re.search(
-        custom_marker_regex, stripped_text, re.DOTALL | re.IGNORECASE
-    )
-    if match_custom:
-        code = match_custom.group(1).strip()
-        logger.debug("Extracted code using custom markers.")
-        return code
-    else:
-        logger.warning(
-            "Could not find '--- BEGIN/END LEAN CODE ---' markers. "
-            "Trying strict markdown block..."
-        )
-        # Fallback: Try strict markdown block encompassing the whole response
-        markdown_regex_strict = r"^```lean\s*(.*?)\s*```$"
-        match_md = re.match(markdown_regex_strict, stripped_text, re.DOTALL)
-        if match_md:
-            code = match_md.group(1).strip()
-            logger.debug("Extracted code using strict markdown block.")
-            return code
-        else:
-            logger.warning(
-                "Could not find strict markdown block ('```lean...```') "
-                "encompassing the whole response."
-            )
-
-    # Log error if extraction failed completely
-    logger.error(
-        "Failed to extract Lean code using any method. Raw text received: "
-        f"{repr(text)[:500]}..."
-    )
-    return None
-
-
-def _build_lean_dependency_context_for_statement(dependencies: List[KBItem]) -> str:
-    """Builds simple context string: dependency names and types. (Internal Helper)
-
-    Used for the statement generation prompt to give the LLM awareness of available
-    item names and types without including their full code.
-
-    Args:
-        dependencies (List[KBItem]): A list of dependency KBItems.
-
-    Returns:
-        str: A formatted string listing dependency names and types, or "(None)"
-        if the list is empty.
-    """
-    if not dependencies:
-        return "(None)"
-    ctx = ""
-    # Get attributes safely
-    for dep in dependencies:
-        dep_name = getattr(dep, "unique_name", "UNKNOWN_DEP")
-        dep_type_name = getattr(getattr(dep, "item_type", None), "name", "UNKNOWN_TYPE")
-        ctx += f"- {dep_name} ({dep_type_name})\n"
-    return ctx.strip()
-
-
-def _build_lean_dependency_context_for_proof(dependencies: List[KBItem]) -> str:
-    """Builds context string with full Lean code of PROVEN deps. (Internal Helper)
-
-    Filters the provided list of dependencies to include only those that are
-    considered "proven" (status PROVEN, AXIOM_ACCEPTED, DEFINITION_ADDED) and
-    have Lean code. Formats the output with markers for clarity in the LLM prompt.
-
-    Args:
-        dependencies (List[KBItem]): A list of potential dependency KBItems.
-
-    Returns:
-        str: A formatted string containing the Lean code of valid, proven
-        dependencies, or a default message if none are found.
-    """
-    dependency_context = ""
-    # Define statuses indicating a dependency is ready to be used in a proof
-    valid_statuses = {
-        ItemStatus.PROVEN,
-        ItemStatus.AXIOM_ACCEPTED,
-        ItemStatus.DEFINITION_ADDED,
-    }
-    # Filter dependencies: must exist, have lean_code, and have a valid status
-    proven_deps = [
-        d
-        for d in dependencies
-        if d
-        and getattr(d, "lean_code", None)
-        and getattr(d, "status", None) in valid_statuses
-    ]
-
-    if proven_deps:
-        for dep in proven_deps:
-            # Safely get attributes
-            dep_name = getattr(dep, "unique_name", "UNKNOWN_DEP")
-            dep_type_name = getattr(
-                getattr(dep, "item_type", None), "name", "UNKNOWN_TYPE"
-            )
-            dep_code = getattr(dep, "lean_code", "# Error: Code missing")
-            # Format clearly for the LLM prompt
-            dependency_context += f"-- Dependency: {dep_name} ({dep_type_name})\n"
-            dependency_context += f"-- BEGIN {dep_name} LEAN --\n"
-            dependency_context += f"{dep_code.strip()}\n"  # Use the actual proven code
-            dependency_context += f"-- END {dep_name} LEAN --\n\n"
-    else:
-        # Provide a clear message if no suitable dependencies were found
-        dependency_context = (
-            "-- (No specific proven dependencies provided from KB. "
-            "Rely on Lean prelude.) --\n"
-        )
-
-    return dependency_context.strip()
-
-
-# --- LLM Caller Functions ---
-async def _call_lean_statement_generator(
-    item: KBItem,
-    dependencies: List[KBItem],
-    statement_error_feedback: Optional[str],
-    client: GeminiClient,
-) -> Optional[str]:
-    """Calls the LLM to generate Lean statement signature (`... := sorry`).
-
-    (Internal Helper)
-
-    Formats the prompt using `LEAN_STATEMENT_GENERATOR_PROMPT`, including item
-    details (LaTeX statement), dependency context (names/types), and optional
-    feedback from previous failed attempts.
-
-    Args:
-        item (KBItem): The KBItem for which to generate the statement shell.
-        dependencies (List[KBItem]): List of dependency items for context.
-        statement_error_feedback (Optional[str]): Feedback from a previous failed
-            statement generation attempt, if applicable.
-        client (GeminiClient): The initialized LLM client instance.
-
-    Returns:
-        Optional[str]: The raw text response from the LLM, or None if the client
-        is unavailable, prompt formatting fails, or the API call errors.
-
-    Raises:
-        ValueError: If the `client` is None.
-    """
-    if not client:
-        raise ValueError("GeminiClient not available for Lean statement generation.")
-    # Safely get attributes from item, providing defaults or raising errors
-    # if critical info missing
-    item_unique_name = getattr(item, "unique_name", "UNKNOWN_ITEM")
-    item_type = getattr(item, "item_type", None)
-    item_type_name = (
-        getattr(item_type, "name", "UNKNOWN_TYPE") if item_type else "UNKNOWN_TYPE"
-    )
+    item_status = getattr(item, "status", None)
     item_latex_statement = getattr(item, "latex_statement", None)
+    item_plan_dependencies = getattr(item, "plan_dependencies", [])
 
+    if item_status == ItemStatus.PROVEN:
+        logger.info(f"Lean Proc: Item {unique_name} is already PROVEN. Skipping.")
+        # Return item, but signal no further action needed maybe? Or let caller handle.
+        # Let's return item and None error message, caller handles PROVEN status.
+        return item, [], None
+
+    # Define statuses that trigger Lean processing
+    try:
+        trigger_statuses = {
+            ItemStatus.LATEX_ACCEPTED,
+            ItemStatus.PENDING_LEAN,
+            ItemStatus.LEAN_VALIDATION_FAILED,
+        }
+    except AttributeError:
+        logger.critical("ItemStatus enum members missing.")
+        return item, [], "ItemStatus enum members missing."
+
+    if item_status not in trigger_statuses:
+        trigger_names = {s.name for s in trigger_statuses if hasattr(s, "name")}
+        status_name = getattr(item_status, "name", "None")
+        msg = (
+            f"Item {unique_name} not in a trigger status "
+            f"({trigger_names}). Current: {status_name}. Skipping."
+        )
+        logger.warning(f"Lean Proc: {msg}")
+        return item, [], msg  # Return item, but with error message
+
+    # Check prerequisite: LaTeX statement must exist
     if not item_latex_statement:
-        logger.error(
-            f"Cannot generate Lean statement for {item_unique_name}: "
-            f"Missing latex_statement."
-        )
-        return None  # Cannot proceed without LaTeX statement
+        msg = f"Cannot process {unique_name}, missing required latex_statement."
+        logger.error(f"Lean Proc: {msg}")
+        # Caller should handle saving ERROR status if needed
+        return item, [], msg
 
-    # Build context string from dependencies
-    dep_context = _build_lean_dependency_context_for_statement(dependencies)
-
+    # --- Check Dependencies ---
+    dependency_items: List[KBItem] = []
     try:
-        base_prompt = LEAN_STATEMENT_GENERATOR_PROMPT
-        # Conditionally format the prompt based on whether feedback is provided
-        if not statement_error_feedback:
-            # Remove the optional feedback section if not needed
-            feedback_pattern = (
-                r"\n\*\*Refinement Feedback \(If Applicable\):\*\*.*?\n"
-                r"(\*\*Instructions:\*\*)"
-            )
-            base_prompt = re.sub(
-                feedback_pattern,
-                r"\n\1",
-                base_prompt,
-                flags=re.DOTALL | re.MULTILINE,
-            )
-            prompt = base_prompt.format(
-                unique_name=item_unique_name,
-                item_type_name=item_type_name,
-                latex_statement=item_latex_statement,  # Already checked it exists
-                dependency_context_for_statement=dep_context,
-                # statement_error_feedback key is removed from template here
-            )
-        else:
-            # Format with feedback included
-            prompt = base_prompt.format(
-                unique_name=item_unique_name,
-                item_type_name=item_type_name,
-                latex_statement=item_latex_statement,
-                dependency_context_for_statement=dep_context,
-                statement_error_feedback=statement_error_feedback,  # Provide feedback
-            )
-    except KeyError as e:
-        logger.error(f"Lean Statement Gen Prompt Formatting Error: Missing key {e}")
-        return None
-    except Exception as e:
-        # Catch other potential formatting issues
-        logger.error(
-            f"Unexpected error formatting Lean statement prompt for "
-            f"{item_unique_name}: {e}"
-        )
-        return None
+        valid_dep_statuses = {
+            ItemStatus.PROVEN,
+            ItemStatus.AXIOM_ACCEPTED,
+            ItemStatus.DEFINITION_ADDED,
+        }
+    except AttributeError:
+        logger.error("Cannot check dependencies: ItemStatus members not accessible.")
+        return item, [], "ItemStatus members not accessible for dependency check."
 
-    # Call the LLM client
-    try:
-        logger.debug(f"Sending Lean statement generation prompt for {item_unique_name}")
-        response_text = await client.generate(prompt=prompt)
-        return response_text
-    except Exception as e:
-        logger.error(
-            f"Error calling Lean statement generator LLM for {item_unique_name}: {e}"
-        )
-        return None
+    logger.debug(
+        f"Checking {len(item_plan_dependencies)} dependencies for {unique_name}..."
+    )
+    for dep_name in item_plan_dependencies:
+        dep_item = get_kb_item_by_name(dep_name, db_path)
+        dep_status = getattr(dep_item, "status", None)
+        dep_code_exists = bool(getattr(dep_item, "lean_code", None))
+
+        # Dependency must exist, be in a valid status, and have lean code
+        if not dep_item or dep_status not in valid_dep_statuses or not dep_code_exists:
+            dep_status_name = getattr(dep_status, "name", "MISSING_ITEM")
+            msg = (
+                f"Dependency '{dep_name}' for '{unique_name}' not ready "
+                f"(Status: {dep_status_name}, Code Exists: {dep_code_exists}). "
+                f"Cannot proceed."
+            )
+            logger.error(msg)
+            # Caller handles saving ERROR status
+            return item, [], msg
+        dependency_items.append(dep_item)
+
+    logger.debug(
+        f"All {len(dependency_items)} dependencies for {unique_name} "
+        f"confirmed available and proven."
+    )
+    return item, dependency_items, None  # Prerequisites met
 
 
-async def _call_lean_proof_generator(
-    lean_statement_shell: str,
-    latex_proof: Optional[str],
-    unique_name: str,
-    item_type_name: str,
-    dependencies: List[KBItem],
-    lean_error_log: Optional[str],
-    client: GeminiClient,
+async def _generate_statement_shell(
+    item: KBItem, dependencies: List[KBItem], client: GeminiClient, db_path: str
 ) -> Optional[str]:
-    """Calls the LLM to generate Lean proof tactics for a statement shell.
+    """Generates the Lean statement shell (`... := sorry`) using the LLM.
 
-    (Internal Helper)
-
-    Formats the prompt using `LEAN_PROOF_GENERATOR_PROMPT`, providing the
-    statement shell (`... := sorry`), informal LaTeX proof (as guidance),
-    dependency context (full Lean code), and optional error logs from previous
-    failed compilation attempts.
+    Handles retries, status updates, and saving the item state during generation.
 
     Args:
-        lean_statement_shell (str): The Lean statement signature ending in `:= sorry`.
-        latex_proof (Optional[str]): The informal LaTeX proof text (guidance only).
-        unique_name (str): The unique name of the KBItem (for logging/context).
-        item_type_name (str): The type name of the KBItem (for context).
-        dependencies (List[KBItem]): List of proven dependency items (for context).
-        lean_error_log (Optional[str]): Error output from the previous failed
-            Lean compilation attempt, if applicable.
-        client (GeminiClient): The initialized LLM client instance.
+        item: The KBItem to process (will be modified and saved).
+        dependencies: List of dependency items for context.
+        client: The initialized LLM client instance.
+        db_path: Path to the knowledge base database file.
 
     Returns:
-        Optional[str]: The raw text response from the LLM, expected to contain
-        the complete Lean code (statement + proof tactics), or None if the client
-        is unavailable, prompt formatting fails, the API call errors, or input
-        validation fails.
-
-    Raises:
-        ValueError: If `client` is None or `lean_statement_shell` is invalid.
+        The generated Lean statement shell string on success, None on failure.
     """
-    if not client:
-        raise ValueError("GeminiClient not available for Lean proof generation.")
-    # Validate the input shell
-    if not lean_statement_shell or ":= sorry" not in lean_statement_shell:
-        msg = (
-            f"Internal Error: _call_lean_proof_generator for {unique_name} "
-            f"called without a valid shell ending in ':= sorry'. "
-            f"Shell: {lean_statement_shell}"
-        )
-        logger.error(msg)
-        # Returning None instead of raising here as it's likely an internal logic error
-        return None
+    logger.info(f"Starting Lean statement generation phase for {item.unique_name}")
+    statement_error_feedback = None
+    statement_accepted = False
+    generated_shell = None
 
-    # Build dependency context string with full Lean code
-    dep_context = _build_lean_dependency_context_for_proof(dependencies)
-
-    try:
-        base_prompt = LEAN_PROOF_GENERATOR_PROMPT
-        # Conditionally format the prompt based on whether an error log is provided
-        if not lean_error_log:
-            # Remove the optional error log section if not needed
-            error_log_pattern = (
-                r"\n\*\*Previous Attempt Error \(If Applicable\):\*\*.*?\n"
-                r"(\*\*Instructions:\*\*)"
-            )
-            base_prompt = re.sub(
-                error_log_pattern,
-                r"\n\1",
-                base_prompt,
-                flags=re.DOTALL | re.MULTILINE,
-            )
-            prompt = base_prompt.format(
-                lean_statement_shell=lean_statement_shell,
-                latex_proof=latex_proof or "(No informal proof provided)",
-                dependency_context_for_proof=dep_context,
-                unique_name=unique_name,  # Added for better LLM context
-                item_type_name=item_type_name,  # Added for better LLM context
-                # lean_error_log key removed from template here
-            )
-        else:
-            # Format with error log included
-            prompt = base_prompt.format(
-                lean_statement_shell=lean_statement_shell,
-                latex_proof=latex_proof or "(No informal proof provided)",
-                dependency_context_for_proof=dep_context,
-                lean_error_log=lean_error_log,  # Provide error log
-                unique_name=unique_name,  # Added for better LLM context
-                item_type_name=item_type_name,  # Added for better LLM context
-            )
-    except KeyError as e:
-        logger.error(f"Lean Proof Gen Prompt Formatting Error: Missing key {e}")
-        return None
-    except Exception as e:
-        # Catch other potential formatting issues
+    # Ensure necessary functions/types are available
+    if not all([save_kb_item, llm_interface]):
         logger.error(
-            f"Unexpected error formatting Lean proof prompt for {unique_name}: {e}"
+            "Cannot generate statement shell: Missing save_kb_item or llm_interface."
         )
         return None
 
-    # Call the LLM client
-    try:
-        logger.debug(f"Sending Lean proof generation prompt for {unique_name}")
-        response_text = await client.generate(prompt=prompt)
-        return response_text
-    except Exception as e:
-        logger.error(f"Error calling Lean proof generator LLM for {unique_name}: {e}")
+    for attempt in range(LEAN_STATEMENT_MAX_ATTEMPTS):
+        logger.info(
+            f"Lean Statement Generation Attempt {attempt + 1}/"
+            f"{LEAN_STATEMENT_MAX_ATTEMPTS} for {item.unique_name}"
+        )
+        # Update status to show progress
+        if hasattr(item, "update_status") and hasattr(
+            ItemStatus, "LEAN_GENERATION_IN_PROGRESS"
+        ):
+            item.update_status(
+                ItemStatus.LEAN_GENERATION_IN_PROGRESS,
+                f"Statement attempt {attempt + 1}",
+            )
+            # Save status only - avoid overwriting potentially useful logs
+            # from previous full run
+            await save_kb_item(item, client=None, db_path=db_path)
+
+        # Call LLM for statement generation via llm_interface
+        raw_response = await llm_interface.call_lean_statement_generator(
+            item, dependencies, statement_error_feedback, client
+        )
+        # Parse response via llm_interface
+        parsed_header = llm_interface.extract_lean_header(raw_response)
+
+        # --- Re-fetch item state after LLM call and save ---
+        # This is crucial if save_kb_item doesn't return the updated object
+        # or if external modifications could occur.
+        refreshed_item = get_kb_item_by_name(item.unique_name, db_path)
+        if not refreshed_item:
+            logger.critical(
+                f"Item {item.unique_name} vanished during statement generation!"
+            )
+            # This is a critical error, potentially raise exception
+            return None
+        item = refreshed_item  # Use the latest state
+        # ----------------------------------------------------
+
+        if not parsed_header:
+            logger.warning(
+                f"Failed to parse Lean header on attempt {attempt + 1} for "
+                f"{item.unique_name}."
+            )
+            statement_error_feedback = (
+                f"LLM output did not contain a valid Lean header "
+                f"(attempt {attempt + 1}). Raw response: "
+                f"{repr(raw_response[:500])}"
+            )
+            # Save raw response and error feedback
+            if hasattr(item, "raw_ai_response"):
+                item.raw_ai_response = raw_response
+            if hasattr(item, "lean_error_log"):
+                item.lean_error_log = statement_error_feedback
+            if hasattr(item, "generation_prompt"):
+                item.generation_prompt = "Statement Gen Prompt (see logs/code)"
+            await save_kb_item(item, client=None, db_path=db_path)  # Save full state
+            continue  # Try next attempt
+        else:
+            # Successfully parsed header
+            logger.info(
+                f"Lean statement shell generated successfully for {item.unique_name} "
+                f"on attempt {attempt + 1}."
+            )
+            generated_shell = parsed_header
+            # Update item with the generated shell
+            if hasattr(item, "lean_code"):
+                item.lean_code = generated_shell
+            if hasattr(item, "generation_prompt"):
+                item.generation_prompt = "Statement Gen Prompt (see logs/code)"
+            if hasattr(item, "raw_ai_response"):
+                item.raw_ai_response = raw_response
+            if hasattr(item, "lean_error_log"):
+                item.lean_error_log = None  # Clear error log
+            # Status remains LEAN_GENERATION_IN_PROGRESS until proof phase
+            # or marked PROVEN
+            await save_kb_item(
+                item, client=None, db_path=db_path
+            )  # Save successful result
+            statement_accepted = True
+            break  # Exit loop on success
+
+    # Check if statement generation ultimately failed
+    if not statement_accepted:
+        logger.error(
+            f"Failed to generate valid Lean statement shell for {item.unique_name} "
+            f"after {LEAN_STATEMENT_MAX_ATTEMPTS} attempts."
+        )
+        # Final status update to ERROR (item state already saved with last error
+        # in loop)
+        if hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+            item.update_status(
+                ItemStatus.ERROR,
+                f"Failed Lean statement generation after "
+                f"{LEAN_STATEMENT_MAX_ATTEMPTS} attempts.",
+            )
+            await save_kb_item(item, client=None, db_path=db_path)
         return None
 
+    return generated_shell
 
-# --- Main Processing Function ---
+
+async def _generate_and_verify_proof(
+    item: KBItem,
+    statement_shell: str,
+    dependencies: List[KBItem],
+    client: GeminiClient,
+    db_path: str,
+    lake_executable_path: str,
+    timeout_seconds: int,
+) -> bool:
+    """Generates and verifies the Lean proof using LLM and lean_interaction.
+
+    Handles retries, status updates, saving item state, and optional proof repair.
+
+    Args:
+        item: The KBItem to process (will be modified and saved).
+        statement_shell: The valid Lean statement shell (`... := sorry`).
+        dependencies: List of dependency items for context.
+        client: The initialized LLM client instance.
+        db_path: Path to the knowledge base database file.
+        lake_executable_path: Path to the `lake` executable.
+        timeout_seconds: Timeout for `lake build` commands.
+
+    Returns:
+        True if verification succeeds within the attempts, False otherwise.
+    """
+    logger.info(
+        f"Starting Lean proof generation and verification phase for {item.unique_name}"
+    )
+    lean_verification_success = False
+
+    # Ensure necessary functions/types are available
+    if not all([save_kb_item, llm_interface, lean_interaction, get_kb_item_by_name]):
+        logger.error("Cannot generate/verify proof: Missing core functions or modules.")
+        return False
+    # Check optional module
+    repair_available = lean_proof_repair and hasattr(
+        lean_proof_repair, "attempt_proof_repair"
+    )
+
+    # Clear previous error log if starting fresh proof attempts
+    # (only if status wasn't already failure)
+    current_status = getattr(item, "status", None)
+    needs_log_clear = (
+        hasattr(ItemStatus, "LEAN_VALIDATION_FAILED")
+        and current_status != ItemStatus.LEAN_VALIDATION_FAILED
+    )
+    if needs_log_clear:
+        if (
+            hasattr(item, "lean_error_log")
+            and getattr(item, "lean_error_log", None) is not None
+        ):
+            status_name = getattr(current_status, "name", "None")
+            logger.debug(
+                f"Clearing previous lean_error_log for {item.unique_name} "
+                f"(Status: {status_name})."
+            )
+            item.lean_error_log = None
+            await save_kb_item(item, client=None, db_path=db_path)
+
+    # --- Proof Attempt Loop ---
+    for attempt in range(LEAN_PROOF_MAX_ATTEMPTS):
+        logger.info(
+            f"Lean Proof Generation Attempt {attempt + 1}/"
+            f"{LEAN_PROOF_MAX_ATTEMPTS} for {item.unique_name}"
+        )
+        # Fetch the latest item state before each attempt
+        current_item_state = get_kb_item_by_name(item.unique_name, db_path)
+        if not current_item_state:
+            logger.critical(f"Item {item.unique_name} vanished mid-proof attempts!")
+            return False  # Treat as failure if item disappears
+        item = current_item_state  # Use latest state
+
+        # Set status to indicate generation is starting for this attempt
+        if hasattr(item, "update_status") and hasattr(
+            ItemStatus, "LEAN_GENERATION_IN_PROGRESS"
+        ):
+            item.update_status(
+                ItemStatus.LEAN_GENERATION_IN_PROGRESS, f"Proof attempt {attempt + 1}"
+            )
+            await save_kb_item(item, client=None, db_path=db_path)
+
+        # Safely get attributes needed for the LLM call
+        current_latex_proof = getattr(item, "latex_proof", None)
+        current_item_type = getattr(item, "item_type", None)
+        current_item_type_name = (
+            getattr(current_item_type, "name", "UNKNOWN_TYPE")
+            if current_item_type
+            else "UNKNOWN_TYPE"
+        )
+        current_lean_error_log = getattr(
+            item, "lean_error_log", None
+        )  # Use error from previous failed attempt
+
+        # --- Call LLM for Proof Generation via llm_interface ---
+        raw_llm_response = await llm_interface.call_lean_proof_generator(
+            lean_statement_shell=statement_shell,
+            latex_proof=current_latex_proof,
+            unique_name=item.unique_name,
+            item_type_name=current_item_type_name,
+            dependencies=dependencies,
+            lean_error_log=current_lean_error_log,
+            client=client,
+        )
+
+        # Re-fetch item state after LLM call before saving LLM output
+        item_after_gen = get_kb_item_by_name(item.unique_name, db_path)
+        if not item_after_gen:
+            logger.critical(
+                f"Item {item.unique_name} vanished after proof generation call!"
+            )
+            return False
+        item = item_after_gen  # Use latest state
+
+        if not raw_llm_response:
+            logger.warning(
+                f"Lean proof generator returned no response on attempt "
+                f"{attempt + 1} for {item.unique_name}"
+            )
+            # Save this state before potentially finishing the loop
+            if hasattr(item, "raw_ai_response"):
+                item.raw_ai_response = None
+            if hasattr(item, "lean_error_log"):
+                item.lean_error_log = "LLM provided no output."
+            await save_kb_item(item, client=None, db_path=db_path)
+
+            if attempt + 1 == LEAN_PROOF_MAX_ATTEMPTS:
+                if hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+                    item.update_status(
+                        ItemStatus.ERROR,
+                        f"LLM failed to generate proof on final attempt {attempt + 1}",
+                    )
+                    await save_kb_item(item, client=None, db_path=db_path)
+            continue
+
+        # --- Parse LLM Response via llm_interface ---
+        generated_lean_code_from_llm = llm_interface.extract_lean_code(raw_llm_response)
+        if not generated_lean_code_from_llm:
+            logger.warning(
+                f"Failed to parse Lean code from proof generator on attempt "
+                f"{attempt + 1} for {item.unique_name}."
+            )
+            error_message = (
+                f"LLM output parsing failed on proof attempt {attempt + 1}. "
+                f"Raw: {repr(raw_llm_response[:500])}"
+            )
+            if hasattr(item, "raw_ai_response"):
+                item.raw_ai_response = raw_llm_response
+            if hasattr(item, "lean_error_log"):
+                item.lean_error_log = error_message
+            if hasattr(item, "generation_prompt"):
+                item.generation_prompt = "Proof Gen Prompt (see logs/code)"
+            await save_kb_item(item, client=None, db_path=db_path)
+
+            if attempt + 1 == LEAN_PROOF_MAX_ATTEMPTS:
+                if hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+                    item.update_status(
+                        ItemStatus.ERROR,
+                        "LLM output parsing failed on final Lean proof attempt",
+                    )
+                    await save_kb_item(item, client=None, db_path=db_path)
+            continue
+
+        # --- Prepare and Verify Code ---
+        logger.info(
+            f"--- LLM Generated Lean Code (Attempt {attempt + 1} for "
+            f"{item.unique_name}) ---"
+        )
+        logger.info(f"\n{generated_lean_code_from_llm}\n")
+        logger.info("--- End LLM Generated Code ---")
+
+        # Update item with the latest generated code and set status for verification
+        if hasattr(item, "lean_code"):
+            item.lean_code = generated_lean_code_from_llm
+        if hasattr(item, "generation_prompt"):
+            item.generation_prompt = "Proof Gen Prompt (see logs/code)"
+        if hasattr(item, "raw_ai_response"):
+            item.raw_ai_response = raw_llm_response
+        if hasattr(item, "update_status") and hasattr(
+            ItemStatus, "LEAN_VALIDATION_PENDING"
+        ):
+            item.update_status(ItemStatus.LEAN_VALIDATION_PENDING)
+        await save_kb_item(
+            item, client=None, db_path=db_path
+        )  # Save before verification
+
+        logger.info(
+            f"Calling lean_interaction.check_and_compile_item for "
+            f"{item.unique_name} (Proof Attempt {attempt + 1})"
+        )
+        try:
+            # Ensure lean_interaction and its method exist before calling
+            if not lean_interaction or not hasattr(
+                lean_interaction, "check_and_compile_item"
+            ):
+                logger.error(
+                    f"lean_interaction.check_and_compile_item not available. "
+                    f"Cannot verify {item.unique_name}"
+                )
+                # Set item to error and fail this attempt
+                if hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+                    item.update_status(
+                        ItemStatus.ERROR, "Lean interaction module misconfiguration"
+                    )
+                    await save_kb_item(item, client=None, db_path=db_path)
+                continue  # Or return False if this is unrecoverable
+
+            verified, message = await lean_interaction.check_and_compile_item(
+                unique_name=item.unique_name,
+                db_path=db_path,
+                lake_executable_path=lake_executable_path,
+                timeout_seconds=timeout_seconds,
+            )
+
+            if verified:
+                logger.info(
+                    f"Successfully verified Lean code for: {item.unique_name} on "
+                    f"attempt {attempt + 1}. Message: {message}"
+                )
+                lean_verification_success = True
+                # Item status updated to PROVEN by check_and_compile_item
+                break  # Exit proof attempt loop successfully
+            else:
+                # Verification failed
+                logger.warning(
+                    f"Verification failed for {item.unique_name} on proof attempt "
+                    f"{attempt + 1}. Message: {message[:500]}..."
+                )
+                # Status/log updated by check_and_compile_item
+
+                # Fetch item again to see the error log saved by check_and_compile
+                item_after_fail = get_kb_item_by_name(item.unique_name, db_path)
+                if not item_after_fail:
+                    logger.error(
+                        f"Item {item.unique_name} vanished after failed "
+                        f"verification attempt!"
+                    )
+                    continue  # Try next attempt if possible, though this is bad
+
+                latest_error_log = getattr(item_after_fail, "lean_error_log", None)
+
+                if latest_error_log:
+                    logger.warning(
+                        f"--- Lean Error Log (Attempt {attempt + 1} for "
+                        f"{item.unique_name}) ---"
+                    )
+                    logger.warning(f"\n{latest_error_log}\n")
+                    logger.warning("--- End Lean Error Log ---")
+
+                    # Optional: Attempt Automated Proof Repair
+                    if (
+                        repair_available
+                        and hasattr(item_after_fail, "lean_code")
+                        and item_after_fail.lean_code
+                    ):
+                        logger.info(
+                            f"Attempting automated proof repair for {item.unique_name} "
+                            f"based on error log."
+                        )
+                        try:
+                            fix_applied, _ = lean_proof_repair.attempt_proof_repair(  # type: ignore
+                                item_after_fail.lean_code, latest_error_log
+                            )
+                            if fix_applied:
+                                logger.info(
+                                    f"Automated proof repair heuristic applied for "
+                                    f"{item.unique_name}."
+                                )
+                            else:
+                                logger.debug(
+                                    f"No automated fix applied by lean_proof_repair "
+                                    f"for {item.unique_name}."
+                                )
+                        except Exception as repair_err:
+                            logger.error(
+                                f"Error during automated proof repair attempt for "
+                                f"{item.unique_name}: {repair_err}"
+                            )
+                else:
+                    logger.warning(
+                        f"No specific error log captured in DB after failed "
+                        f"verification attempt {attempt + 1} for {item.unique_name}, "
+                        f"message: {message}"
+                    )
+
+                # Continue to the next LLM proof generation attempt loop iteration
+                continue
+
+        except Exception as verify_err:
+            logger.exception(
+                f"check_and_compile_item crashed unexpectedly for {item.unique_name} "
+                f"on proof attempt {attempt + 1}: {verify_err}"
+            )
+            # Attempt to set item status to ERROR
+            item_err_state = get_kb_item_by_name(item.unique_name, db_path)  # Re-fetch
+            if (
+                item_err_state
+                and hasattr(item_err_state, "update_status")
+                and hasattr(ItemStatus, "ERROR")
+            ):
+                err_log_message = (
+                    f"Verification system crashed: {str(verify_err)[:500]}"
+                )
+                item_err_state.update_status(
+                    ItemStatus.ERROR, "Lean verification system error"
+                )
+                if hasattr(item_err_state, "lean_error_log"):
+                    item_err_state.lean_error_log = err_log_message
+                if hasattr(item_err_state, "increment_failure_count") and callable(
+                    getattr(item_err_state, "increment_failure_count", None)
+                ):
+                    item_err_state.increment_failure_count()
+                await save_kb_item(item_err_state, client=None, db_path=db_path)
+            continue  # Try next LLM attempt
+
+    # --- Loop Finished ---
+    # Final status should be PROVEN or LEAN_VALIDATION_FAILED/ERROR set within
+    # loop/check_and_compile
+    return lean_verification_success
+
+
+# --- Main Orchestrator Function ---
 
 
 async def generate_and_verify_lean(
@@ -705,656 +707,220 @@ async def generate_and_verify_lean(
     lake_executable_path: str = "lake",
     timeout_seconds: int = 120,
 ) -> bool:
-    """Generates, verifies, and potentially repairs Lean code for a KBItem.
+    """Orchestrates the full Lean processing pipeline for a single KBItem.
 
-    This function orchestrates the full Lean processing pipeline for an item:
-
-    1.  Fetches the item and checks its status and prerequisites (LaTeX statement,
-        proven dependencies).
-
-    2.  Generates the Lean statement signature (`... := sorry`) using an LLM if
-        it doesn't exist, with retries (`LEAN_STATEMENT_MAX_ATTEMPTS`).
-
-    3.  If the item requires proof:
-
-        a. Enters a loop (up to `LEAN_PROOF_MAX_ATTEMPTS`) to generate proof tactics.
-
-        b. Calls the LLM proof generator, providing the statement shell, informal
-           proof, dependency code, and any previous compilation errors.
-
-        c. Parses the full Lean code from the LLM response.
-
-        d. Calls `lean_interaction.check_and_compile_item` to verify the code in a
-           temporary environment and update the persistent shared library on
-           success.
-
-        e. If verification succeeds, updates status to `PROVEN` and returns True.
-
-        f. If verification fails, stores the error log and continues the loop
-           (potentially after attempting automated repair via `lean_proof_repair`).
-
-    4.  If the item does not require proof, marks it as `PROVEN` if a valid
-        statement exists.
-
-    5.  Updates the item's status (`PROVEN`, `LEAN_VALIDATION_FAILED`, `ERROR`)
-        and stores relevant logs/responses in the database throughout the process.
+    Calls helper functions to check prerequisites, generate statement, and
+    generate/verify proof as needed.
 
     Args:
-        unique_name (str): The unique name of the KBItem to process.
-        client (GeminiClient): An initialized LLM client instance.
-        db_path (Optional[str]): Path to the knowledge base database file. Uses
+        unique_name: The unique name of the KBItem to process.
+        client: An initialized LLM client instance.
+        db_path: Path to the knowledge base database file. Uses
             `DEFAULT_DB_PATH` if None.
-        lake_executable_path (str): Path to the `lake` executable.
-        timeout_seconds (int): Timeout for `lake build` commands executed by
-            `lean_interaction.check_and_compile_item`.
+        lake_executable_path: Path to the `lake` executable.
+        timeout_seconds: Timeout for `lake build` commands.
 
     Returns:
-        bool: True if the Lean code is successfully generated (if needed) and
-        verified (passing `check_and_compile_item`), False otherwise.
+        True if the item is successfully processed (ends in PROVEN status),
+        False otherwise.
     """
     start_time = time.time()
-    # Check if dependencies are properly loaded
-    kbitem_available = KBItem is not None and not isinstance(
-        KBItem, type("Dummy", (object,), {})
-    )  # Check if real type
-    if kbitem_available:
-        if not all(
-            [
-                KBItem,
-                ItemStatus,
-                ItemType,
-                get_kb_item_by_name,
-                save_kb_item,
-                lean_interaction,
-                get_items_by_status,
-                lean_proof_repair,
-            ]
-        ):
-            logger.critical(
-                "Required modules (kb_storage, lean_interaction, "
-                "lean_proof_repair) not fully loaded. Cannot process Lean."
+    effective_db_path = db_path or DEFAULT_DB_PATH
+    overall_success = False
+
+    # --- Basic readiness checks ---
+    if not client or isinstance(client, type("DummyGeminiClient", (object,), {})):
+        logger.error(
+            f"GeminiClient missing or invalid. Cannot process Lean for {unique_name}."
+        )
+        return False
+    if not all(
+        [
+            KBItem,
+            ItemStatus,
+            ItemType,
+            get_kb_item_by_name,
+            save_kb_item,
+            lean_interaction,
+            lean_proof_repair,
+            llm_interface,
+        ]
+    ):
+        logger.critical(
+            f"Core modules/types missing for {unique_name}. Cannot process."
+        )
+        return False
+
+    try:
+        # --- Step 1: Check prerequisites and dependencies ---
+        item, dependency_items, error_msg = _check_prerequisites_and_dependencies(
+            unique_name, effective_db_path
+        )
+
+        if error_msg:
+            logger.warning(f"Prerequisite check failed for {unique_name}: {error_msg}")
+            # Save ERROR status only if item exists and status indicates an error
+            # occurred during processing
+            if item and hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+                # Avoid overwriting PROVEN status if that was the reason
+                # for the 'error' message
+                if getattr(item, "status", None) != ItemStatus.PROVEN:
+                    # Check if the error requires setting ERROR status
+                    if (
+                        "missing required latex_statement" in error_msg
+                        or "not ready" in error_msg
+                        or "not accessible" in error_msg
+                    ):
+                        item.update_status(ItemStatus.ERROR, error_msg)
+                        await save_kb_item(item, client=None, db_path=effective_db_path)
+            return False  # Prerequisite failed
+
+        if not item:  # Should not happen if error_msg is None, but check defensively
+            logger.error(
+                f"Prerequisite check returned no item and no error for {unique_name}."
             )
             return False
-    else:
-        warnings.warn("Running Lean processor with dummy KB types.", RuntimeWarning)
 
-    if not client:
-        logger.error(f"GeminiClient missing. Cannot process Lean for {unique_name}.")
-        return False
-    if not hasattr(lean_interaction, "check_and_compile_item"):
-        logger.critical(
-            f"lean_interaction.check_and_compile_item missing. "
-            f"Cannot process Lean for {unique_name}."
-        )
-        return False
-    if not hasattr(lean_proof_repair, "attempt_proof_repair"):
-        logger.critical(
-            f"lean_proof_repair.attempt_proof_repair missing. "
-            f"Cannot process Lean for {unique_name}."
-        )
-        return False
+        # If item is already proven, the check function handles logging,
+        # we just exit successfully.
+        if (
+            hasattr(ItemStatus, "PROVEN")
+            and getattr(item, "status", None) == ItemStatus.PROVEN
+        ):
+            return True
 
-    effective_db_path = db_path or DEFAULT_DB_PATH
+        # --- Step 2: Determine if statement generation is needed ---
+        needs_statement_generation = not getattr(item, "lean_code", None) or getattr(
+            item, "status", None
+        ) in {ItemStatus.LATEX_ACCEPTED, ItemStatus.PENDING_LEAN}
+        statement_shell = None
 
-    # --- Initial Item Fetch and Status Checks ---
-    item = get_kb_item_by_name(unique_name, effective_db_path)
-    if not item:
-        logger.error(f"Lean Proc: Item not found: {unique_name}")
-        return False
-
-    item_status = getattr(item, "status", None)
-    item_type = getattr(item, "item_type", None)
-    item_lean_code = getattr(item, "lean_code", None)
-    item_latex_statement = getattr(item, "latex_statement", None)
-    item_plan_dependencies = getattr(item, "plan_dependencies", [])
-    # item_latex_proof = getattr(item, "latex_proof", None) # F841: Variable unused
-
-    if item_status == ItemStatus.PROVEN:
-        logger.info(f"Lean Proc: Item {unique_name} is already PROVEN. Skipping.")
-        return True
-
-    # Define statuses that trigger Lean processing
-    trigger_statuses = {
-        ItemStatus.LATEX_ACCEPTED,
-        ItemStatus.PENDING_LEAN,
-        ItemStatus.LEAN_VALIDATION_FAILED,
-    }
-    if item_status not in trigger_statuses:
-        trigger_names = {s.name for s in trigger_statuses}
-        status_name = item_status.name if item_status else "None"
-        logger.warning(
-            f"Lean Proc: Item {unique_name} not in a trigger status "
-            f"({trigger_names}). Current: {status_name}. Skipping."
-        )
-        return False
-
-    # Check prerequisite: LaTeX statement must exist
-    if not item_latex_statement:
-        logger.error(
-            f"Lean Proc: Cannot process {unique_name}, missing required "
-            f"latex_statement."
-        )
-        if hasattr(item, "update_status"):
-            item.update_status(
-                ItemStatus.ERROR, "Missing latex_statement for Lean generation."
+        if needs_statement_generation:
+            statement_shell = await _generate_statement_shell(
+                item, dependency_items, client, effective_db_path
             )
-            await save_kb_item(item, client=None, db_path=effective_db_path)
-        return False
-
-    # Determine if proof is needed based on item type
-    proof_required = (
-        item_type.requires_proof() if item_type else False
-    )  # Assume proof needed if type unknown
-
-    # Handle non-provable types early IF they already have Lean code
-    if not proof_required and item_lean_code:
-        item_type_name = item_type.name if item_type else "N/A"
-        logger.info(
-            f"Lean Proc: No proof required for {unique_name} ({item_type_name}) "
-            f"and Lean code exists. Marking PROVEN."
-        )
-        if hasattr(item, "update_status"):
-            item.update_status(ItemStatus.PROVEN)
-            await save_kb_item(item, client=None, db_path=effective_db_path)
-        return True
-    # Note: If proof not required but code missing, we fall through to statement
-    # generation.
-
-    # --- Check Dependencies ---
-    dependency_items: List[KBItem] = []
-    valid_dep_statuses = {
-        ItemStatus.PROVEN,
-        ItemStatus.AXIOM_ACCEPTED,
-        ItemStatus.DEFINITION_ADDED,
-    }
-    logger.debug(
-        f"Checking {len(item_plan_dependencies)} dependencies for {unique_name}..."
-    )
-    all_deps_ready = True
-    for dep_name in item_plan_dependencies:
-        dep_item = get_kb_item_by_name(dep_name, effective_db_path)
-        dep_status = getattr(dep_item, "status", None)
-        dep_code_exists = bool(getattr(dep_item, "lean_code", None))
-
-        # Dependency must exist, be in a valid status, and have lean code
-        if not dep_item or dep_status not in valid_dep_statuses or not dep_code_exists:
-            dep_status_name = dep_status.name if dep_status else "MISSING_ITEM"
-            logger.error(
-                f"Dependency '{dep_name}' for '{unique_name}' not ready "
-                f"(Status: {dep_status_name}, Code Exists: {dep_code_exists}). "
-                f"Cannot proceed."
-            )
-            if hasattr(item, "update_status"):
-                item.update_status(
-                    ItemStatus.ERROR,
-                    (
-                        f"Prerequisite dependency '{dep_name}' is not PROVEN "
-                        f"or lacks code."
-                    ),
-                )
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-            all_deps_ready = False
-            break  # Stop checking other dependencies
-        dependency_items.append(dep_item)
-
-    if not all_deps_ready:
-        return False  # Exit if any dependency is not ready
-
-    logger.debug(
-        f"All {len(dependency_items)} dependencies for {unique_name} "
-        f"confirmed available and proven."
-    )
-
-    # --- Statement Generation Phase (if needed) ---
-    original_lean_statement_shell = item_lean_code
-    statement_error_feedback = None  # Feedback for refinement
-    needs_statement_generation = not item_lean_code or item_status in {
-        ItemStatus.LATEX_ACCEPTED,
-        ItemStatus.PENDING_LEAN,
-    }
-
-    if needs_statement_generation:
-        logger.info(f"Starting Lean statement generation phase for {unique_name}")
-        statement_accepted = False
-        for attempt in range(LEAN_STATEMENT_MAX_ATTEMPTS):
-            logger.info(
-                f"Lean Statement Generation Attempt {attempt + 1}/"
-                f"{LEAN_STATEMENT_MAX_ATTEMPTS} for {unique_name}"
-            )
-            # Update status to show progress
-            if hasattr(item, "update_status"):
-                item.update_status(
-                    ItemStatus.LEAN_GENERATION_IN_PROGRESS,
-                    f"Statement attempt {attempt + 1}",
-                )
-                await save_kb_item(
-                    item, client=None, db_path=effective_db_path
-                )  # Save status only
-
-            # Call LLM for statement generation
-            raw_response = await _call_lean_statement_generator(
-                item, dependency_items, statement_error_feedback, client
-            )
-            parsed_header = _extract_lean_header(raw_response)
-
-            # Refresh item state after LLM call
+            if not statement_shell:
+                logger.error(f"Failed to generate statement shell for {unique_name}.")
+                # Status already set to ERROR inside helper function
+                return False
+            # Re-fetch item state after generation as it was modified
             item = get_kb_item_by_name(unique_name, effective_db_path)
             if not item:
-                raise Exception(
-                    f"Item {unique_name} vanished during statement generation."
+                logger.critical(
+                    f"Item {unique_name} vanished after statement generation!"
                 )
+                return False  # Or raise
+        else:
+            logger.info(
+                f"Skipping Lean statement generation for {unique_name}, "
+                f"using existing lean_code."
+            )
+            statement_shell = getattr(item, "lean_code", None)
+            # Validate existing shell
+            if not statement_shell or ":= sorry" not in statement_shell.strip():
+                error_msg = (
+                    f"Existing lean_code for {unique_name} is invalid "
+                    f"(missing ':= sorry')."
+                )
+                logger.error(error_msg)
+                if hasattr(item, "update_status") and hasattr(ItemStatus, "ERROR"):
+                    item.update_status(ItemStatus.ERROR, error_msg)
+                    await save_kb_item(item, client=None, db_path=effective_db_path)
+                return False
 
-            if not parsed_header:
-                logger.warning(f"Failed to parse Lean header on attempt {attempt + 1}.")
-                statement_error_feedback = (
-                    f"LLM output did not contain a valid Lean header "
-                    f"(attempt {attempt + 1}). Raw response: "
-                    f"{repr(raw_response[:500])}"
-                )
-                # Save raw response and error feedback for potential debugging
-                # or next attempt
-                if hasattr(item, "raw_ai_response"):
-                    item.raw_ai_response = raw_response
-                if hasattr(item, "lean_error_log"):
-                    item.lean_error_log = (
-                        statement_error_feedback  # Store feedback as error
-                    )
-                if hasattr(item, "generation_prompt"):
-                    item.generation_prompt = "Statement Gen Prompt (see logs/code)"
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-                continue  # Try next attempt
+        # --- Step 3: Handle non-provable items ---
+        item_type = getattr(item, "item_type", None)
+        proof_required = getattr(item_type, "requires_proof", lambda: True)()
+
+        if not proof_required:
+            logger.info(
+                f"Lean Proc: Statement generated/present for non-provable "
+                f"{unique_name}. Marking PROVEN."
+            )
+            if hasattr(item, "update_status") and hasattr(ItemStatus, "PROVEN"):
+                # Only update if not already proven
+                if getattr(item, "status", None) != ItemStatus.PROVEN:
+                    item.update_status(ItemStatus.PROVEN)
+                    await save_kb_item(item, client=None, db_path=effective_db_path)
+                overall_success = True  # Mark as success
             else:
-                # Successfully parsed header
-                logger.info(
-                    f"Lean statement shell generated successfully for {unique_name} "
-                    f"on attempt {attempt + 1}."
+                logger.error(
+                    f"Failed to mark non-provable item {unique_name} as PROVEN."
                 )
-                original_lean_statement_shell = parsed_header
-                # Update item with the generated shell
-                if hasattr(item, "lean_code"):
-                    item.lean_code = original_lean_statement_shell
-                if hasattr(item, "generation_prompt"):
-                    item.generation_prompt = "Statement Gen Prompt (see logs/code)"
-                if hasattr(item, "raw_ai_response"):
-                    item.raw_ai_response = raw_response
-                if hasattr(item, "lean_error_log"):
-                    item.lean_error_log = (
-                        None  # Clear previous statement error feedback
-                    )
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-                statement_accepted = True
-                break  # Exit loop on success
-
-        # Check if statement generation ultimately failed
-        if not statement_accepted:
-            logger.error(
-                f"Failed to generate valid Lean statement shell for {unique_name} "
-                f"after {LEAN_STATEMENT_MAX_ATTEMPTS} attempts."
+                overall_success = False  # Should not happen if checks passed
+        else:
+            # --- Step 4: Generate and verify proof ---
+            proof_success = await _generate_and_verify_proof(
+                item,
+                statement_shell,
+                dependency_items,
+                client,
+                effective_db_path,
+                lake_executable_path,
+                timeout_seconds,
             )
-            if hasattr(item, "update_status"):  # Ensure item object still exists
-                item.update_status(
-                    ItemStatus.ERROR,
-                    f"Failed Lean statement generation after "
-                    f"{LEAN_STATEMENT_MAX_ATTEMPTS} attempts.",
-                )
-                # Keep last error feedback in lean_error_log
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-            return False  # Cannot proceed without a statement shell
-    else:
-        # Use existing Lean code as the statement shell
-        logger.info(
-            f"Skipping Lean statement generation for {unique_name}, "
-            f"using existing lean_code."
+            overall_success = proof_success
+
+    except Exception as e:
+        logger.exception(
+            f"Unhandled exception during generate_and_verify_lean for "
+            f"{unique_name}: {e}"
         )
-        original_lean_statement_shell = item_lean_code
-        # Validate existing shell format
-        if (
-            not original_lean_statement_shell
-            or ":= sorry" not in original_lean_statement_shell
-        ):
-            logger.error(
-                f"Existing lean_code for {unique_name} is invalid "
-                f"(missing ':= sorry'). Cannot proceed."
-            )
-            if hasattr(item, "update_status"):
-                item.update_status(
-                    ItemStatus.ERROR,
-                    "Invalid existing lean_code shell (missing ':= sorry').",
-                )
-                await save_kb_item(item, client=None, db_path=effective_db_path)
-            return False
-
-    # --- Handle non-provable items after potential statement generation ---
-    if not proof_required:
-        logger.info(
-            f"Lean Proc: Statement generated/present for non-provable "
-            f"{unique_name}. Marking PROVEN."
-        )
-        item_final = get_kb_item_by_name(
-            unique_name, effective_db_path
-        )  # Re-fetch latest state
-        if (
-            item_final
-            and hasattr(item_final, "status")
-            and item_final.status != ItemStatus.PROVEN
-        ):
-            if hasattr(item_final, "update_status"):
-                item_final.update_status(ItemStatus.PROVEN)
-                await save_kb_item(item_final, client=None, db_path=effective_db_path)
-        elif not item_final:
-            logger.error(f"Item {unique_name} vanished before final PROVEN update.")
-        return True  # Success for non-provable item with statement
-
-    # --- Proof Generation and Verification Phase ---
-    logger.info(
-        f"Starting Lean proof generation and verification phase for {unique_name}"
-    )
-    lean_verification_success = False
-
-    # Fetch item state just before the proof loop
-    item_before_proof_loop = get_kb_item_by_name(unique_name, effective_db_path)
-    if not item_before_proof_loop or not original_lean_statement_shell:
-        logger.error(
-            f"Cannot proceed to proof generation: Item {unique_name} missing "
-            f"or statement shell invalid before proof loop."
-        )
-        return False
-
-    # Clear previous error log if starting fresh proof attempts
-    if (
-        getattr(item_before_proof_loop, "status", None)
-        != ItemStatus.LEAN_VALIDATION_FAILED
-    ):
-        if (
-            hasattr(item_before_proof_loop, "lean_error_log")
-            and getattr(item_before_proof_loop, "lean_error_log", None) is not None
-        ):
-            status_name = (
-                item_before_proof_loop.status.name
-                if item_before_proof_loop.status
-                else "None"
-            )
-            logger.debug(
-                f"Clearing previous lean_error_log for {unique_name} "
-                f"(Status: {status_name})."
-            )
-            item_before_proof_loop.lean_error_log = None
-            await save_kb_item(
-                item_before_proof_loop, client=None, db_path=effective_db_path
-            )  # Save cleared log
-
-    # --- Proof Attempt Loop ---
-    for attempt in range(LEAN_PROOF_MAX_ATTEMPTS):
-        logger.info(
-            f"Lean Proof Generation Attempt {attempt + 1}/"
-            f"{LEAN_PROOF_MAX_ATTEMPTS} for {unique_name}"
-        )
-        # Fetch the latest item state, including any error log from previous
-        # verification attempt
-        current_item_state = get_kb_item_by_name(unique_name, effective_db_path)
-        if not current_item_state:
-            logger.error(f"Item {unique_name} vanished mid-proof attempts!")
-            return False
-
-        # Set status to indicate generation is starting for this attempt
-        if hasattr(current_item_state, "update_status"):
-            current_item_state.update_status(
-                ItemStatus.LEAN_GENERATION_IN_PROGRESS, f"Proof attempt {attempt + 1}"
-            )
-            await save_kb_item(
-                current_item_state, client=None, db_path=effective_db_path
-            )
-
-        # Safely get attributes needed for the LLM call
-        current_latex_proof = getattr(current_item_state, "latex_proof", None)
-        current_item_type_name = getattr(
-            getattr(current_item_state, "item_type", None), "name", "UNKNOWN_TYPE"
-        )
-        current_lean_error_log = getattr(
-            current_item_state, "lean_error_log", None
-        )  # Use error from previous failed attempt
-
-        # --- Call LLM for Proof Generation ---
-        raw_llm_response = await _call_lean_proof_generator(
-            lean_statement_shell=original_lean_statement_shell,
-            latex_proof=current_latex_proof,
-            unique_name=unique_name,
-            item_type_name=current_item_type_name,
-            dependencies=dependency_items,
-            lean_error_log=current_lean_error_log,  # Provide error log for refinement
-            client=client,
-        )
-
-        # Refresh item state after LLM call
-        item_after_gen = get_kb_item_by_name(unique_name, effective_db_path)
-        if not item_after_gen:
-            raise Exception(f"Item {unique_name} vanished after proof generation call.")
-
-        if not raw_llm_response:
-            logger.warning(
-                f"Lean proof generator returned no response on attempt {attempt + 1}"
-            )
-            if attempt + 1 == LEAN_PROOF_MAX_ATTEMPTS:  # If final attempt failed
-                if hasattr(item_after_gen, "update_status"):
-                    item_after_gen.update_status(
-                        ItemStatus.ERROR,
-                        f"LLM failed to generate proof on final attempt {attempt + 1}",
-                    )
-                    if hasattr(item_after_gen, "lean_error_log"):
-                        item_after_gen.lean_error_log = "LLM provided no output."
-                    await save_kb_item(
-                        item_after_gen, client=None, db_path=effective_db_path
-                    )
-            continue  # Try next attempt
-
-        # --- Parse LLM Response ---
-        generated_lean_code_from_llm = _extract_lean_code(raw_llm_response)
-        if not generated_lean_code_from_llm:
-            logger.warning(
-                f"Failed to parse Lean code from proof generator on attempt "
-                f"{attempt + 1}."
-            )
-            error_message = (
-                f"LLM output parsing failed on proof attempt {attempt + 1}. "
-                f"Raw: {repr(raw_llm_response[:500])}"
-            )
-            # Save raw response and parsing error
-            if hasattr(item_after_gen, "raw_ai_response"):
-                item_after_gen.raw_ai_response = raw_llm_response
-            if hasattr(item_after_gen, "lean_error_log"):
-                item_after_gen.lean_error_log = error_message
-            if hasattr(item_after_gen, "generation_prompt"):
-                item_after_gen.generation_prompt = "Proof Gen Prompt (see logs/code)"
-            if (
-                attempt + 1 == LEAN_PROOF_MAX_ATTEMPTS
-            ):  # If final attempt failed parsing
-                if hasattr(item_after_gen, "update_status"):
-                    item_after_gen.update_status(
-                        ItemStatus.ERROR,
-                        "LLM output parsing failed on final Lean proof attempt",
-                    )
-            await save_kb_item(item_after_gen, client=None, db_path=effective_db_path)
-            continue  # Try next attempt
-
-        # Log generated code before attempting verification
-        logger.info(f"--- LLM Generated Lean Code (Attempt {attempt + 1}) ---")
-        logger.info(f"\n{generated_lean_code_from_llm}\n")
-        logger.info("--- End LLM Generated Code ---")
-
-        # --- Prepare and Verify Code ---
-        # Update item with the latest generated code and set status for verification
-        if hasattr(item_after_gen, "lean_code"):
-            item_after_gen.lean_code = generated_lean_code_from_llm
-        if hasattr(item_after_gen, "generation_prompt"):
-            item_after_gen.generation_prompt = "Proof Gen Prompt (see logs/code)"
-        if hasattr(item_after_gen, "raw_ai_response"):
-            item_after_gen.raw_ai_response = (
-                raw_llm_response  # Store the successful generation
-            )
-        if hasattr(item_after_gen, "update_status"):
-            item_after_gen.update_status(ItemStatus.LEAN_VALIDATION_PENDING)
-        await save_kb_item(
-            item_after_gen, client=None, db_path=effective_db_path
-        )  # Save before verification
-
-        logger.info(
-            f"Calling lean_interaction.check_and_compile_item for {unique_name} "
-            f"(Proof Attempt {attempt + 1})"
-        )
+        # Attempt to mark item as error if possible
         try:
-            # Call verification function (handles temp env, lake build,
-            # persistent update)
-            verified, message = await lean_interaction.check_and_compile_item(
-                unique_name=unique_name,
-                db_path=effective_db_path,
-                lake_executable_path=lake_executable_path,
-                timeout_seconds=timeout_seconds,
-            )
-
-            if verified:
-                logger.info(
-                    f"Successfully verified Lean code for: {unique_name} on "
-                    f"attempt {attempt + 1}. Message: {message}"
-                )
-                # Status should now be PROVEN (set by check_and_compile_item)
-                lean_verification_success = True
-                break  # Exit proof attempt loop successfully
-            else:
-                # Verification failed
-                logger.warning(
-                    f"Verification failed for {unique_name} on proof attempt "
-                    f"{attempt + 1}. Message: {message[:500]}..."
-                )
-                # Status should be LEAN_VALIDATION_FAILED
-                # (set by check_and_compile_item)
-                # Error log should also be saved by check_and_compile_item
-
-                # Fetch item again to see the error log saved by check_and_compile
-                item_after_fail = get_kb_item_by_name(unique_name, effective_db_path)
-                latest_error_log = (
-                    getattr(item_after_fail, "lean_error_log", None)
-                    if item_after_fail
-                    else None
-                )
-
-                if latest_error_log:
-                    logger.warning(f"--- Lean Error Log (Attempt {attempt + 1}) ---")
-                    logger.warning(f"\n{latest_error_log}\n")
-                    logger.warning("--- End Lean Error Log ---")
-
-                    # --- Optional: Attempt Automated Proof Repair ---
-                    # Check if repair module is available and item code exists
-                    if (
-                        lean_proof_repair
-                        and hasattr(item_after_fail, "lean_code")
-                        and item_after_fail.lean_code
-                    ):
-                        logger.info(
-                            f"Attempting automated proof repair for {unique_name} "
-                            f"based on error log."
-                        )
-                        try:
-                            fix_applied, _ = lean_proof_repair.attempt_proof_repair(
-                                item_after_fail.lean_code, latest_error_log
-                            )
-                            if fix_applied:
-                                logger.info(
-                                    f"Automated proof repair heuristic applied for "
-                                    f"{unique_name}. Note: Re-verification within "
-                                    f"this loop is not implemented."
-                                )
-                                # The next LLM attempt will receive the original
-                                # error log, not reflecting the automated repair
-                                # attempt.
-                                # Could potentially save the repaired code back
-                                # to DB here, but adds complexity (might
-                                # overwrite user changes, needs re-verify
-                                # logic).
-                            else:
-                                logger.debug(
-                                    f"No automated fix applied by lean_proof_repair "
-                                    f"for {unique_name}."
-                                )
-                        except Exception as repair_err:
-                            logger.error(
-                                f"Error during automated proof repair attempt for "
-                                f"{unique_name}: {repair_err}"
-                            )
-                    # --- End Optional Proof Repair ---
-                else:
-                    logger.warning(
-                        f"No specific error log captured in DB after failed "
-                        f"verification attempt {attempt + 1}, message: {message}"
+            item_err = get_kb_item_by_name(unique_name, effective_db_path)
+            if (
+                item_err
+                and hasattr(item_err, "update_status")
+                and hasattr(ItemStatus, "ERROR")
+            ):
+                if (
+                    getattr(item_err, "status", None) != ItemStatus.PROVEN
+                ):  # Avoid overwriting success
+                    item_err.update_status(
+                        ItemStatus.ERROR, f"Unhandled exception: {str(e)[:100]}"
                     )
-
-                # Continue to the next LLM proof generation attempt loop iteration
-                continue
-
-        except Exception as verify_err:
-            # Catch errors from check_and_compile_item itself
-            logger.exception(
-                f"check_and_compile_item crashed unexpectedly for {unique_name} on "
-                f"proof attempt {attempt + 1}: {verify_err}"
+                    await save_kb_item(item_err, client=None, db_path=effective_db_path)
+        except Exception as save_err:
+            logger.error(
+                f"Failed to save ERROR status after unhandled exception for "
+                f"{unique_name}: {save_err}"
             )
-            # Attempt to set item status to ERROR
-            item_err_state = get_kb_item_by_name(unique_name, effective_db_path)
-            if item_err_state and hasattr(item_err_state, "update_status"):
-                err_log_message = (
-                    f"Verification system crashed: {str(verify_err)[:500]}"
-                )
-                item_err_state.update_status(
-                    ItemStatus.ERROR, "Lean verification system error"
-                )
-                if hasattr(item_err_state, "lean_error_log"):
-                    item_err_state.lean_error_log = err_log_message
-                if hasattr(item_err_state, "increment_failure_count"):
-                    item_err_state.increment_failure_count()
-                await save_kb_item(
-                    item_err_state, client=None, db_path=effective_db_path
-                )
-                # Log error message if saved
-                if getattr(item_err_state, "lean_error_log", None):
-                    logger.warning(
-                        f"--- Lean Error Log (Verification Crash - "
-                        f"Attempt {attempt + 1}) ---"
-                    )
-                    logger.warning(f"\n{item_err_state.lean_error_log}\n")
-                    logger.warning("--- End Lean Error Log ---")
+        overall_success = False  # Ensure failure on exception
 
-            continue  # Try next LLM attempt
-
-    # --- Loop Finished ---
+    # --- Final Logging ---
     end_time = time.time()
     duration = end_time - start_time
-
-    if lean_verification_success:
+    if overall_success:
         logger.info(
             f"Lean processing SUCCEEDED for {unique_name} in {duration:.2f} seconds."
         )
-        return True
     else:
-        logger.error(
-            f"Failed to generate and verify Lean proof for {unique_name} after "
-            f"all attempts ({LEAN_PROOF_MAX_ATTEMPTS} attempts). "
-            f"Total time: {duration:.2f} seconds."
-        )
-        # Final status should be LEAN_VALIDATION_FAILED or ERROR,
-        # already set within the loop.
-        # Fetch final state just for logging consistency.
+        # Fetch final state for accurate logging
         final_item = get_kb_item_by_name(unique_name, effective_db_path)
-        final_status_name = getattr(
-            getattr(final_item, "status", None), "name", "UNKNOWN"
+        final_status_name = "UNKNOWN"
+        if final_item:
+            final_status = getattr(final_item, "status", None)
+            final_status_name = getattr(final_status, "name", "UNKNOWN")
+            # Check again if it somehow ended as PROVEN despite failure path
+            if hasattr(ItemStatus, "PROVEN") and final_status == ItemStatus.PROVEN:
+                logger.warning(
+                    f"Item {unique_name} ended as PROVEN despite processing path "
+                    f"indicating failure. Assuming success."
+                )
+                overall_success = True  # Correct the outcome based on final state
+                logger.info(
+                    f"Lean processing SUCCEEDED (final status) for {unique_name} "
+                    f"in {duration:.2f} seconds."
+                )
+                return True  # Return success
+
+        logger.error(
+            f"Lean processing FAILED for {unique_name}. "
+            f"Final Status: {final_status_name}. Total time: {duration:.2f} seconds."
         )
-        logger.error(f"Final status for {unique_name}: {final_status_name}")
-        # Double-check if somehow marked Proven - indicates a logic error somewhere.
-        if final_status_name == ItemStatus.PROVEN.name:
-            logger.warning(
-                f"Item {unique_name} ended as PROVEN despite loop indicating failure. "
-                f"Assuming success due to final status."
-            )
-            return True
-        # Otherwise, the failure outcome is correct.
-        return False
+
+    return overall_success
 
 
 # --- Batch Processing Function ---
@@ -1371,69 +937,82 @@ async def process_pending_lean_items(
     LATEX_ACCEPTED, PENDING_LEAN, LEAN_VALIDATION_FAILED). It then iterates
     through eligible items (checking status again before processing), calls
     `generate_and_verify_lean` for each one up to an optional limit, and logs
-    summary statistics. Also handles non-provable items that only need statement
-    generation.
+    summary statistics.
 
     Args:
-        client (GeminiClient): An initialized LLM client instance.
-        db_path (Optional[str]): Path to the database file. If None, uses
-            `DEFAULT_DB_PATH`.
-        limit (Optional[int]): Max number of items to process in this batch.
-        process_statuses (Optional[List[ItemStatus]]): List of statuses to query
-            for processing. Defaults to LATEX_ACCEPTED, PENDING_LEAN,
-            LEAN_VALIDATION_FAILED.
-        **kwargs: Additional keyword arguments (e.g., `lake_executable_path`,
-            `timeout_seconds`) passed directly to `generate_and_verify_lean`.
+        client: An initialized LLM client instance.
+        db_path: Path to the database file. If None, uses `DEFAULT_DB_PATH`.
+        limit: Max number of items to process in this batch.
+        process_statuses: List of statuses to query for processing. Defaults
+            to LATEX_ACCEPTED, PENDING_LEAN, LEAN_VALIDATION_FAILED.
+        **kwargs: Additional keyword arguments passed to `generate_and_verify_lean`.
     """
-    # Dependency checks
-    kbitem_available = KBItem is not None and not isinstance(
-        KBItem, type("Dummy", (object,), {})
-    )
-    if kbitem_available:
-        if not all(
-            [
-                ItemStatus,
-                ItemType,
-                get_items_by_status,
-                get_kb_item_by_name,
-                save_kb_item,
-                lean_proof_repair,
-                lean_interaction,
-            ]
-        ):
-            logger.critical(
-                "Required modules not fully loaded. Cannot batch process Lean items."
-            )
-            return
-    else:
-        warnings.warn("Running Lean batch process with dummy KB types.", RuntimeWarning)
+    # Basic dependency checks
+    if not all(
+        [
+            KBItem,
+            ItemStatus,
+            ItemType,
+            get_items_by_status,
+            get_kb_item_by_name,
+            save_kb_item,
+        ]
+    ):
+        logger.critical(
+            "Required KB modules/functions not fully loaded. "
+            "Cannot batch process Lean items."
+        )
+        return
+    if not client or isinstance(client, type("DummyGeminiClient", (object,), {})):
+        logger.error("GeminiClient missing or invalid. Cannot batch process.")
+        return
 
     effective_db_path = db_path or DEFAULT_DB_PATH
-    # Default statuses to query if none provided
-    if process_statuses is None:
-        process_statuses_set = {
+    # Determine target statuses
+    try:
+        default_statuses = {
             ItemStatus.PENDING_LEAN,
             ItemStatus.LATEX_ACCEPTED,
             ItemStatus.LEAN_VALIDATION_FAILED,
         }
-    else:
-        process_statuses_set = set(process_statuses)  # Use a set for efficient lookup
+        if process_statuses is None:
+            process_statuses_set = default_statuses
+        else:
+            valid_statuses = {s for s in process_statuses if isinstance(s, ItemStatus)}
+            if len(valid_statuses) != len(process_statuses):
+                logger.warning(
+                    "Invalid status types provided to process_pending_lean_items."
+                )
+            process_statuses_set = (
+                valid_statuses if valid_statuses else default_statuses
+            )
+            if not valid_statuses:
+                logger.warning("No valid process_statuses provided, using defaults.")
+    except AttributeError:
+        logger.critical(
+            "Cannot determine batch processing statuses: "
+            "ItemStatus members not accessible."
+        )
+        return
 
     processed_count = 0
     success_count = 0
     fail_count = 0
     items_to_process_names = []
 
-    status_names = [s.name for s in process_statuses_set]
+    status_names = [getattr(s, "name", "UNKNOWN") for s in process_statuses_set]
     logger.info(
-        f"Starting Lean batch processing. Querying for items with statuses: "
-        f"{status_names}."
+        f"Starting Lean batch processing. Querying for statuses: {status_names}."
     )
+
     # --- Collect eligible items ---
     for status in process_statuses_set:
         if limit is not None and len(items_to_process_names) >= limit:
             break
         try:
+            if not callable(get_items_by_status):
+                continue  # Skip if function not loaded
+
             items_gen = get_items_by_status(status, effective_db_path)
             count_for_status = 0
             for item in items_gen:
@@ -1441,55 +1020,53 @@ async def process_pending_lean_items(
                     break
                 item_unique_name = getattr(item, "unique_name", None)
                 if not item_unique_name:
-                    continue  # Skip unnamed items
+                    continue
 
-                # Handle non-provable items correctly during collection
-                item_type = getattr(item, "item_type", None)
-                item_status = getattr(item, "status", None)  # Should match loop status
-                item_lean_code = getattr(item, "lean_code", None)
-                needs_proof = item_type.requires_proof() if item_type else True
+                # Add item if not already collected
+                if item_unique_name not in items_to_process_names:
+                    # Check if non-provable item with code can be marked PROVEN directly
+                    item_type = getattr(item, "item_type", None)
+                    item_lean_code = getattr(item, "lean_code", None)
+                    needs_proof = getattr(item_type, "requires_proof", lambda: True)()
+                    current_item_status = getattr(
+                        item, "status", None
+                    )  # Should be same as loop 'status'
 
-                if not needs_proof and item_status == ItemStatus.LATEX_ACCEPTED:
-                    # If non-provable and already has code, mark PROVEN and skip
-                    # adding to batch
-                    if item_lean_code:
+                    if (
+                        not needs_proof
+                        and item_lean_code
+                        and current_item_status == ItemStatus.LATEX_ACCEPTED
+                    ):
                         logger.info(
-                            f"Found non-provable item {item_unique_name} with code. "
-                            f"Marking PROVEN directly."
+                            f"Pre-marking non-provable item {item_unique_name} "
+                            f"with code as PROVEN."
                         )
-                        if hasattr(item, "update_status"):
+                        if hasattr(item, "update_status") and hasattr(
+                            ItemStatus, "PROVEN"
+                        ):
                             item.update_status(ItemStatus.PROVEN)
                             await save_kb_item(
                                 item, client=None, db_path=effective_db_path
                             )
-                        continue  # Don't add to processing list
-                    else:
-                        # Needs statement generation, fall through to add
-                        logger.info(
-                            f"Found non-provable item {item_unique_name} needing "
-                            f"statement generation. Adding to list."
-                        )
-                        pass
+                        continue  # Skip adding to main processing list
 
-                # Add all other eligible items (provable, or
-                # non-provable needing statement)
-                if item_unique_name not in items_to_process_names:
+                    # Otherwise, add to list for processing
                     items_to_process_names.append(item_unique_name)
                     count_for_status += 1
 
             logger.debug(
-                f"Found {count_for_status} potential items with status {status.name}"
+                f"Found {count_for_status} potential items with status "
+                f"{getattr(status, 'name', 'UNKNOWN')}"
             )
-            if limit is not None and len(items_to_process_names) >= limit:
-                break
+
         except Exception as e:
-            logger.error(f"Failed to retrieve items with status {status.name}: {e}")
+            logger.error(
+                f"Failed to retrieve items with status "
+                f"{getattr(status, 'name', 'UNKNOWN')}: {e}"
+            )
 
     if not items_to_process_names:
-        logger.info(
-            "No eligible items found requiring Lean processing in the "
-            "specified statuses."
-        )
+        logger.info("No eligible items found requiring Lean processing.")
         return
 
     logger.info(
@@ -1498,7 +1075,7 @@ async def process_pending_lean_items(
 
     # --- Process collected items ---
     for unique_name in items_to_process_names:
-        # Re-fetch item state before processing to ensure it's still eligible
+        # Re-fetch item state before processing to double-check eligibility
         try:
             current_item_state = get_kb_item_by_name(unique_name, effective_db_path)
             if not current_item_state:
@@ -1508,54 +1085,41 @@ async def process_pending_lean_items(
                 continue
 
             item_status = getattr(current_item_state, "status", None)
-            item_type = getattr(current_item_state, "item_type", None)
-            item_lean_code = getattr(current_item_state, "lean_code", None)
-            needs_proof = item_type.requires_proof() if item_type else True
-
-            # Double-check eligibility based on latest status and whether
-            # processing is needed
-            is_eligible_status = item_status in process_statuses_set
-            # Processing is needed if it requires proof, OR if it doesn't
-            # but lacks code
-            needs_processing = needs_proof or (not needs_proof and not item_lean_code)
-
-            if not is_eligible_status or not needs_processing:
+            # Check if status is still one of the target statuses
+            if item_status not in process_statuses_set:
+                status_name = getattr(item_status, "name", "None")
                 logger.info(
-                    f"Skipping {unique_name}: Status "
-                    f"({item_status.name if item_status else 'None'}) "
-                    f"or state changed, no longer eligible for processing."
+                    f"Skipping {unique_name}: Status ({status_name}) changed, "
+                    f"no longer eligible."
                 )
                 continue
 
         except Exception as fetch_err:
             logger.error(
-                f"Error re-fetching state for {unique_name} before processing: "
-                f"{fetch_err}. Skipping."
+                f"Error re-fetching state for {unique_name}: {fetch_err}. Skipping."
             )
             continue
 
         # Proceed with processing the eligible item
+        item_id = getattr(current_item_state, "id", "N/A")
+        status_name = getattr(item_status, "name", "None")
         logger.info(
-            f"--- Processing Lean for: {unique_name} "
-            f"(ID: {getattr(current_item_state, 'id', 'N/A')}, "
-            f"Status: {item_status.name if item_status else 'None'}) ---"
+            f"--- Processing Lean for: {unique_name} (ID: {item_id}, "
+            f"Status: {status_name}) ---"
         )
         processed_count += 1
         try:
-            # Call the main processing function, passing through kwargs
+            # Call the main orchestrator function
             success = await generate_and_verify_lean(
                 unique_name, client, effective_db_path, **kwargs
             )
             if success:
                 success_count += 1
-                logger.info(f"Successfully processed Lean for {unique_name}.")
             else:
                 fail_count += 1
-                logger.warning(
-                    f"Failed to process Lean for {unique_name} (see previous logs)."
-                )
+            # Detailed outcome logged within generate_and_verify_lean
         except Exception as e:
-            # Catch unexpected errors from generate_and_verify_lean
+            # Catch unexpected errors from the orchestrator
             logger.exception(
                 f"Critical error during batch processing of {unique_name}: {e}"
             )
@@ -1563,21 +1127,28 @@ async def process_pending_lean_items(
             # Attempt to mark item as ERROR in DB
             try:
                 err_item = get_kb_item_by_name(unique_name, effective_db_path)
-                # Only set ERROR if not already PROVEN
-                # (shouldn't happen if exception occurred)
-                if err_item and getattr(err_item, "status", None) != ItemStatus.PROVEN:
-                    if hasattr(err_item, "update_status"):
+                if (
+                    err_item
+                    and hasattr(err_item, "update_status")
+                    and hasattr(ItemStatus, "ERROR")
+                ):
+                    current_err_status = getattr(err_item, "status", None)
+                    is_proven = (
+                        hasattr(ItemStatus, "PROVEN")
+                        and current_err_status == ItemStatus.PROVEN
+                    )
+                    if not is_proven:  # Don't overwrite success
                         err_item.update_status(
                             ItemStatus.ERROR,
-                            f"Batch Lean processing crashed: {str(e)[:500]}",
+                            f"Batch processing crashed: {str(e)[:100]}",
                         )
                         await save_kb_item(
                             err_item, client=None, db_path=effective_db_path
                         )
             except Exception as save_err:
                 logger.error(
-                    f"Failed to save ERROR status for {unique_name} "
-                    f"after batch crash: {save_err}"
+                    f"Failed to save ERROR status for {unique_name} after batch crash: "
+                    f"{save_err}"
                 )
 
         logger.info(f"--- Finished processing Lean for {unique_name} ---")
