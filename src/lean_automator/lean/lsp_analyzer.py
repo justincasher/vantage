@@ -24,7 +24,7 @@ with the LSP server via the `LeanLspClient`:
 
 7. Assembles an annotated version of the processed code, interleaving
    goal states and diagnostics as comments.
-   
+
 8. Appends any original high-level build error messages.
 
 The resulting annotated code provides detailed, contextual feedback suitable
