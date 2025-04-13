@@ -14,14 +14,17 @@ theme:
   logo: images/favicon.png 
   favicon: images/favicon.png
   features:
-    - navigation.tabs     # Use top-level sections as tabs
-    - navigation.sections # Expand sections in the side navigation
-    - navigation.top      # Back-to-top button
-    - search.suggest      # Autocomplete suggestions in search
-    - search.highlight    # Highlight search terms on results page
-    - content.code.annotate # Allows code annotations
-    - content.code.copy   # Copy button for code blocks
-    - header.autohide     # Automatically hide the header
+    - content.code.annotate    # Allows adding annotations overlaying code blocks
+    - content.code.copy        # Adds a copy-to-clipboard button to code blocks
+    - header.autohide          # Automatically hides the header when scrolling down
+    - navigation.expand        # Automatically expand active navigation section in sidebar
+    - navigation.instant         # Enable single-page application navigation (faster)
+    - navigation.instant.progress # Show a progress bar during instant navigation
+    - navigation.sections      # Group nested pages into sections in the sidebar
+    - navigation.tabs          # Render top-level sections as tabs below the header
+    - navigation.top           # Adds a back-to-top button when scrolling down
+    - search.highlight         # Highlight search terms on result pages
+    - search.suggest           # Show search suggestions/completions as you type
   palette: # Allow light/dark mode toggle
     - scheme: default     # Default light mode
       primary: deep purple
