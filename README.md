@@ -47,4 +47,4 @@ We are actively looking for collaborators! Feel free to explore the [issues tab]
 
 ## License
 
-This project is licensed under the terms of the MIT License. See the [LICENSE](LICENSE) file for the full text.
+This project is licensed under the terms of the Appache License. See the [LICENSE](LICENSE) file for the full text.
