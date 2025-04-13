@@ -13,7 +13,6 @@ theme:
   name: material
   logo: images/favicon.png 
   favicon: images/favicon.png
-  copyright: Copyright &copy; 2025 Vantage Project Contributors | Licensed under the <a href="https://github.com/justincasher/vantage/blob/master/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>
   features:
     - navigation.tabs     # Use top-level sections as tabs
     - navigation.sections # Expand sections in the side navigation
@@ -69,6 +68,8 @@ nav:
     - 'Coding Style': 'contributing/coding_style_guidelines.md'
     - 'Code of Conduct': 'contributing/code_of_conduct.md'
 
+# Copyright & Licensing
+copyright: Copyright &copy; 2025 Vantage Project Contributors | Licensed under the <a href="https://github.com/justincasher/vantage/blob/master/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>
 
 # Markdown Extensions (Enable extra formatting features)
 markdown_extensions:
