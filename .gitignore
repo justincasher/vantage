@@ -25,3 +25,6 @@ test.ipynb
 
 # pydoc markdown
 mkdocs.yml
+
+# DS Store (Mac)
+.DS_Store
