@@ -28,3 +28,6 @@ mkdocs.yml
 
 # DS Store (Mac)
 .DS_Store
+
+# miniF2F
+minif2f_lean_test_env
