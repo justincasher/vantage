@@ -52,10 +52,17 @@ TEST_ENV_DIR = PROJECT_ROOT / TEST_ENV_DIR_NAME
 MINIF2F_DATA_PATH = TEST_ENV_DIR / MINIF2F_DATA_FILENAME
 
 # Subdirectory within TEST_ENV_DIR for temporary source files
-TEST_SRC_SUBDIR = "Minif2fTest"
+TEST_SRC_SUBDIR = "MiniF2F"
 
 # Execution Parameters
 TIMEOUT_SECONDS = 180 # Timeout in seconds for Lean verification
+
+# --- Fixed Header ---
+# This header will be used for ALL problems, ignoring the one in the JSONL file.
+FIXED_LEAN_HEADER = """\
+import MiniF2F.Minif2fImport
+open BigOperators Real Nat Topology
+"""
 # ---------------------------------------------
 # END OF SCRIPT-SPECIFIC CONFIGURATION SECTION
 
@@ -74,12 +81,11 @@ MODEL_NAME = APP_CONFIG.get("llm", {}).get("default_gemini_model", "gemini-1.5-f
 # or potentially via get_gemini_api_key() if GeminiClient uses it explicitly.
 
 
-# --- Helper Functions --- (Identical to previous version)
+# --- Helper Functions ---
 
 def load_minif2f_data(jsonl_filepath: pathlib.Path) -> list[dict]:
     """Loads minif2f problems from a JSON Lines file."""
     data = []
-    # filepath = pathlib.Path(jsonl_filepath) # Path object now passed directly
     if not jsonl_filepath.is_file():
         print(f"Error: Cannot find minif2f data file: {jsonl_filepath}")
         return []
@@ -102,95 +108,155 @@ async def run_lean_verification(
     problem_id: str,
     test_env_dir: pathlib.Path,
     test_src_subdir: str,
-    # lake_executable: str, # Removed
     timeout: int
 ) -> tuple[bool, str, str]:
-    """Writes Lean code to a temporary file and attempts to compile it using lake build."""
+    """
+    Writes Lean code to a temporary file within the specified test environment
+    and attempts to compile it using 'lake build'.
+
+    Args:
+        lean_code: The full Lean code string (including fixed header and theorem body).
+        problem_id: The identifier of the problem being tested.
+        test_env_dir: Path object pointing to the root of the Lean test environment directory.
+        test_src_subdir: The name of the subdirectory within test_env_dir where source files reside.
+        timeout: Maximum time in seconds to allow for the verification process.
+
+    Returns:
+        A tuple containing:
+        - bool: True if verification succeeded (lake build returned 0), False otherwise.
+        - str: The standard output from the lake build process.
+        - str: The standard error from the lake build process (or timeout/exception message).
+    """
     src_dir = test_env_dir / test_src_subdir
-    src_dir.mkdir(exist_ok=True)
+    src_dir.mkdir(exist_ok=True) # Ensure the source subdirectory exists
+
+    # Create a safe filename from the problem ID and add a UUID for uniqueness
     safe_problem_id = "".join(c if c.isalnum() else "_" for c in problem_id)
     temp_filename_base = f"temp_{safe_problem_id}_{uuid.uuid4().hex[:8]}"
     temp_lean_file = src_dir / f"{temp_filename_base}.lean"
+
+    # Construct the Lean module name based on directory structure
     module_name = f"{test_src_subdir}.{temp_filename_base}"
-    lake_executable = "lake" # Use command name directly
+
+    # Use 'lake' command directly, assuming it's in the system PATH
+    lake_executable = "lake"
+
     print(f"Attempting verification for {problem_id} in {temp_lean_file}...")
     try:
+        # Write the assembled Lean code to the temporary file
         with open(temp_lean_file, 'w', encoding='utf-8') as f:
             f.write(lean_code)
+
+        # Execute 'lake build <module_name>' within the test environment directory
         print(f"Running: {lake_executable} build {module_name} in {test_env_dir}")
         process = await asyncio.create_subprocess_exec(
             lake_executable, 'build', module_name,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=str(test_env_dir)
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(test_env_dir) # Set the working directory for lake
         )
+
+        # Wait for the process to complete or timeout
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             print(f"Error: Lean verification timed out after {timeout} seconds.")
-            try: process.kill()
-            except ProcessLookupError: pass
-            await process.wait()
+            # Attempt to kill the timed-out process
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass # Process already terminated
+            await process.wait() # Ensure resources are cleaned up
             return False, "", f"TimeoutError: Verification exceeded {timeout} seconds."
         except Exception as comm_err:
+             # Handle potential errors during communication (less common)
              print(f"Error during process communication: {comm_err}")
-             try: process.kill()
-             except ProcessLookupError: pass
+             try:
+                 process.kill()
+             except ProcessLookupError:
+                 pass
              await process.wait()
              return False, "", f"Communication Error: {comm_err}"
+
+        # Decode stdout and stderr
         stdout = stdout_bytes.decode('utf-8', errors='ignore')
         stderr = stderr_bytes.decode('utf-8', errors='ignore')
+
+        # Check the return code of the lake process
         success = (process.returncode == 0)
-        if success: print(f"Verification SUCCESSFUL for {problem_id} (Return Code: {process.returncode})")
-        else: print(f"Verification FAILED for {problem_id} (Return Code: {process.returncode})")
+
+        if success:
+            print(f"Verification SUCCESSFUL for {problem_id} (Return Code: {process.returncode})")
+        else:
+            print(f"Verification FAILED for {problem_id} (Return Code: {process.returncode})")
+
         return success, stdout, stderr
+
     except Exception as e:
+        # Catch any other exceptions during the process setup or file writing
         print(f"Error during Lean verification process: {e}")
         return False, "", f"Exception during verification: {e}"
     finally:
+        # Ensure the temporary file is deleted even if errors occur
         if 'temp_lean_file' in locals() and temp_lean_file.exists():
-            try: temp_lean_file.unlink()
-            except OSError as e: print(f"Warning: Could not delete temporary file {temp_lean_file}: {e}")
+            try:
+                temp_lean_file.unlink()
+            except OSError as e:
+                # Log a warning if deletion fails, but don't crash
+                print(f"Warning: Could not delete temporary file {temp_lean_file}: {e}")
 
 async def run_lsp_analysis(
     lean_code: str,
     problem_id: str,
     test_env_dir: pathlib.Path,
-    # lean_executable: str, # Removed
     build_stderr: str
 ) -> str:
-    """Runs the LSP analyzer on failed code."""
-    lean_executable = "lean" # Use command name directly
+    """
+    Runs the LSP analyzer (from lean_automator) on failed Lean code to get diagnostics.
+
+    Args:
+        lean_code: The full Lean code string that failed verification.
+        problem_id: The identifier of the problem.
+        test_env_dir: Path object pointing to the root of the Lean test environment directory.
+        build_stderr: The stderr output from the failed 'lake build' command, used as fallback.
+
+    Returns:
+        A string containing the LSP analysis feedback or an error message.
+    """
+    # Use 'lean' command directly, assuming it's in the system PATH
+    lean_executable = "lean"
+
     print(f"Running LSP analysis for failed problem {problem_id}...")
     try:
+        # Call the imported analyzer function
         analysis_result = await analyze_lean_failure(
             lean_code=lean_code,
-            lean_executable_path=lean_executable,
-            cwd=str(test_env_dir),
-            shared_lib_path=None,
-            fallback_error=build_stderr
+            lean_executable_path=lean_executable, # Pass the command name
+            cwd=str(test_env_dir), # Analyzer needs the context of the project
+            shared_lib_path=None, # Assuming not needed unless specified by lean_automator docs
+            fallback_error=build_stderr # Provide build error as context
         )
         return analysis_result
     except Exception as e:
+        # Catch errors specifically from the analysis step
         print(f"Error during LSP analysis: {e}")
         return f"LSP analysis failed with exception: {e}"
 
 # --- Main Execution Logic ---
 
 async def main():
-    # Use script-specific configuration variables defined at the top
+    """
+    Main asynchronous function to orchestrate the theorem proving test.
+    """
+    # --- Configuration Setup ---
     problem_id_to_run = PROBLEM_ID_TO_TEST
-    # Paths are now pathlib objects derived dynamically
     data_file_path_obj = MINIF2F_DATA_PATH
     test_env_path_obj = TEST_ENV_DIR
     test_src_subdir_name = TEST_SRC_SUBDIR
-    # lake_executable_path = LAKE_EXECUTABLE # Removed
-    # lean_executable_path = LEAN_EXECUTABLE # Removed
     timeout_val = TIMEOUT_SECONDS
+    model_name_from_config = MODEL_NAME
 
-    # Use model name from APP_CONFIG
-    model_name_from_config = MODEL_NAME # Uses variable defined above from APP_CONFIG
-
-    # Validate paths (using the derived pathlib objects)
+    # --- Path Validation ---
     if not data_file_path_obj.is_file():
         print(f"Error: Data file not found at {data_file_path_obj}")
         sys.exit(1)
@@ -198,46 +264,48 @@ async def main():
         print(f"Error: Lean test environment directory not found at {test_env_path_obj}")
         sys.exit(1)
     if not (test_env_path_obj / "lakefile.lean").is_file():
-         print(f"Error: No 'lakefile.lean' found in {test_env_path_obj}")
+         print(f"Error: No 'lakefile.lean' found in {test_env_path_obj}. This is required for 'lake build'.")
          sys.exit(1)
 
-    # Load data (pass pathlib object)
+    # --- Load Problem Data ---
     all_problems = load_minif2f_data(data_file_path_obj)
     if not all_problems:
+        print("Exiting due to failure loading problems.")
         sys.exit(1)
 
-    # Find the selected problem
+    # --- Select Problem ---
     problem_to_test = next((p for p in all_problems if p.get("id") == problem_id_to_run), None)
 
     if not problem_to_test:
-        print(f"Error: Problem with ID '{problem_id_to_run}' not found in data file.")
+        print(f"Error: Problem with ID '{problem_id_to_run}' not found in {data_file_path_obj.name}.")
         sys.exit(1)
 
-    # Extract necessary fields
+    # --- Extract Problem Details ---
     problem_id = problem_to_test.get("id")
     formal_statement = problem_to_test.get("formal_statement")
-    header = problem_to_test.get("header") # Get the header provided in the data
+    # The 'header' field from the JSONL is intentionally ignored here.
 
-    if not all([problem_id, formal_statement, header]):
-        print(f"Error: Missing required fields (id, formal_statement, header) for problem {problem_id}")
+    # Validate extracted fields
+    if not all([problem_id, formal_statement]):
+        print(f"Error: Missing required fields (id, formal_statement) for problem {problem_id}")
         sys.exit(1)
 
     print(f"--- Testing Problem: {problem_id} ---")
-    # Print the model name being used (sourced from APP_CONFIG)
     print(f"Model: {model_name_from_config}")
-    print(f"Lean Env: {test_env_path_obj}") # Use the path object
-    # Don't print the full statement here, as the LLM only needs the part after header
-    # print(f"Statement:\n{formal_statement}\n") # Optional: print if needed
+    print(f"Lean Env: {test_env_path_obj}")
+    print(f"Using Fixed Header:\n{FIXED_LEAN_HEADER}")
 
-    # Initialize Gemini Client
+    # --- Initialize LLM Client ---
     try:
+        # Assumes GeminiClient uses GOOGLE_API_KEY env var or other config internally
         client = GeminiClient(default_generation_model=model_name_from_config)
     except Exception as e:
         print(f"Error initializing GeminiClient: {e}")
         sys.exit(1)
 
-    # Format the prompt - ** UPDATED WITH LEAN 4 SYNTAX RULES **
-    # Ask LLM only for the theorem body, excluding header/imports
+    # --- Prepare LLM Prompt ---
+    # The prompt asks the LLM *only* for the theorem body, without imports/opens.
+    # The FIXED_LEAN_HEADER will be prepended later.
     prompt = f"""
 You are an expert Lean 4 programmer using mathlib4.
 Your goal is to complete the following Lean theorem statement by replacing ':= sorry' with a valid proof.
@@ -278,7 +346,7 @@ Provide ONLY the Lean code starting from `theorem ...` including the signature a
 Start your response with ```lean and end it with ```. Do NOT include `import` or `open` lines.
 """
 
-    # Call LLM
+    # --- Call LLM for Proof Generation ---
     print("Generating proof with LLM...")
     try:
         llm_response = await client.generate(prompt, model=model_name_from_config)
@@ -286,9 +354,9 @@ Start your response with ```lean and end it with ```. Do NOT include `import` or
         print(f"Error calling GeminiClient generate: {e}")
         sys.exit(1)
 
-    # Extract Lean code from response
+    # --- Extract Code from LLM Response ---
     print("Extracting code from LLM response...")
-    # This now expects only the theorem body (theorem... := ... end)
+    # Expects only the theorem definition and proof body (e.g., "theorem ... := by ...")
     extracted_theorem_body = extract_lean_code(llm_response)
 
     if not extracted_theorem_body:
@@ -298,25 +366,24 @@ Start your response with ```lean and end it with ```. Do NOT include `import` or
         print("--------------------")
         sys.exit(1)
 
-    # --- Assemble the full code for verification ---
-    # Combine the header from JSONL with the LLM's generated theorem body
-    full_lean_code_to_verify = f"{header}\n\n{extracted_theorem_body}"
+    # --- Assemble Full Lean Code ---
+    # Combine the predefined FIXED_LEAN_HEADER with the LLM's generated theorem body.
+    full_lean_code_to_verify = f"{FIXED_LEAN_HEADER}\n\n{extracted_theorem_body}"
 
     print("--- Assembled Code for Verification ---")
     print(full_lean_code_to_verify)
     print("---------------------------------------")
 
-    # --- Verification ---
+    # --- Run Lean Verification ---
     success, stdout, stderr = await run_lean_verification(
         lean_code=full_lean_code_to_verify,
         problem_id=problem_id,
-        test_env_dir=test_env_path_obj, # Use path object
+        test_env_dir=test_env_path_obj,
         test_src_subdir=test_src_subdir_name,
-        # lake_executable=lake_executable_path, # Removed
         timeout=timeout_val
     )
 
-    # --- Reporting & Analysis --- (Identical to previous version)
+    # --- Report Results & Analyze Failures ---
     print("\n--- Result ---")
     if success:
         print(f"✅ SUCCESS: Proof for {problem_id} verified successfully.")
@@ -325,12 +392,13 @@ Start your response with ```lean and end it with ```. Do NOT include `import` or
         print("--- Build Error (stderr) ---")
         print(stderr if stderr else "(No stderr captured)")
         print("--------------------------")
+
+        # Run LSP analysis on the failed code
         lsp_feedback = await run_lsp_analysis(
-            lean_code=full_lean_code_to_verify, # Analyze the combined code
+            lean_code=full_lean_code_to_verify, # Analyze the full code that failed
             problem_id=problem_id,
-            test_env_dir=test_env_path_obj, # Use path object
-            # lean_executable=lean_executable_path, # Removed
-            build_stderr=stderr
+            test_env_dir=test_env_path_obj,
+            build_stderr=stderr # Pass stderr from build failure
         )
         print("\n--- LSP Analysis Feedback ---")
         print(lsp_feedback)
@@ -339,19 +407,20 @@ Start your response with ```lean and end it with ```. Do NOT include `import` or
     print(f"--- Finished Problem: {problem_id} ---")
 
 
+# --- Script Entry Point ---
 if __name__ == "__main__":
-    # Ensure lean_automator modules can be found if script is run directly
-    # and lean_automator is not installed system-wide.
-    # This adds the parent directory of the script's location (PROJECT_ROOT) to sys.path,
-    # assuming the script is e.g. inside 'scripts/'.
+    # Ensure lean_automator modules can be found if the script is run directly
+    # and lean_automator is not installed system-wide or in the standard PYTHONPATH.
+    # This adds the parent directory of the script's location (PROJECT_ROOT) to sys.path.
     if str(PROJECT_ROOT) not in sys.path:
          sys.path.insert(0, str(PROJECT_ROOT))
-         print(f"Added {PROJECT_ROOT} to sys.path")
+         print(f"Added {PROJECT_ROOT} to sys.path to locate lean_automator modules.")
 
-    # Ensure APP_CONFIG is loaded before running main
+    # Check if APP_CONFIG was loaded successfully by the import mechanism
     if "APP_CONFIG" not in globals():
-         print("Error: APP_CONFIG not loaded. Check config loader import.")
+         print("Error: APP_CONFIG not loaded. Check lean_automator.config.loader import and configuration setup.")
          sys.exit(1)
-    print("APP_CONFIG loaded successfully.") # Optional confirmation
+    print("APP_CONFIG loaded successfully.")
 
+    # Run the main asynchronous function
     asyncio.run(main())
