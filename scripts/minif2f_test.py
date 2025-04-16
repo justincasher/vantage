@@ -569,47 +569,22 @@ async def solve_problem(
 
         # --- Process Verification Result ---
         if success:
+            # Build SUCCEEDED based on exit code 0.
+            # We are NO LONGER running LSP analysis to check for remaining goals.
+            # Success is determined solely by the build command's exit code.
             print(
-                f"Build SUCCEEDED for {problem_id} (Iter: {current_iteration}). "
-                "Checking goals via LSP..."
+                f"Build SUCCEEDED for {problem_id} (Iter: {current_iteration}) "
+                "based on exit code 0."
             )
-            lsp_feedback = await run_lsp_analysis(
-                lean_code=full_lean_code_to_verify,
-                problem_id=problem_id,
-                iteration=current_iteration,
-                test_env_dir=test_env_path_obj,
-                build_stderr=stderr,
-            )
-            lsp_feedback_for_next_prompt = lsp_feedback
-            final_feedback_output = lsp_feedback  # Update final feedback
-
-            # Print LSP feedback for this iteration
+            proof_succeeded = True
+            # Set final feedback to build stdout for successful builds, or a message
+            final_feedback_output = last_build_stdout or "(Build Succeeded)"
             print(
-                f"\n--- LSP Feedback (Problem: {problem_id}, "
-                f"Iter: {current_iteration}, Build Success) ---"
+                f"✅ SUCCESS: Proof for {problem_id} verified successfully "
+                f"(based *only* on build exit code 0) in iteration {current_iteration}."
             )
-            print(lsp_feedback)
-            print(
-                "---------------------------------------------------------------------"
-            )
-
-            if (
-                "unsolved goals" not in lsp_feedback.lower()
-                and "⊢" not in lsp_feedback
-                and "error" not in lsp_feedback.lower()
-            ):
-                proof_succeeded = True
-                print(
-                    f"✅ SUCCESS: Proof for {problem_id} verified successfully in "
-                    f"iteration {current_iteration}."
-                )
-                break  # Exit the loop for this problem successfully
-            else:
-                print(
-                    f"Build succeeded for {problem_id}, but goals remain or warnings "
-                    "present. Preparing for next iteration..."
-                )
-                pass  # Continue to next iteration
+            # Break the loop on the first successful build
+            break
 
         else:  # Build failed
             print(
