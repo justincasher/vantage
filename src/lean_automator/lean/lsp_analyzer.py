@@ -208,7 +208,7 @@ def _parse_goal_result(goal_result: Optional[Any]) -> str:
     if isinstance(goal_result, dict):
         # Check for explicit empty dictionary, often means success but no goal info
         if not goal_result:
-            return "No goal applicable/available on this line" # Changed message
+            return "No goal applicable/available on this line"  # Changed message
 
         # Prioritize 'rendered' if available and non-empty
         if rendered := goal_result.get("rendered"):
@@ -217,14 +217,14 @@ def _parse_goal_result(goal_result: Optional[Any]) -> str:
 
         # Fallback to 'plainGoal' if available and non-empty
         if plain_goal := goal_result.get("plainGoal"):
-             if isinstance(plain_goal, str) and plain_goal.strip():
+            if isinstance(plain_goal, str) and plain_goal.strip():
                 return plain_goal.strip()
 
         # Handle 'goals' list
         if "goals" in goal_result and isinstance(goal_result["goals"], list):
             if not goal_result["goals"]:
                 # Empty list often means goals accomplished or none active
-                return "goals accomplished" # Or "No active goals"
+                return "goals accomplished"  # Or "No active goals"
             # Format multiple goals (existing logic)
             return f"{len(goal_result['goals'])} goal(s): " + " | ".join(
                 [
@@ -234,14 +234,15 @@ def _parse_goal_result(goal_result: Optional[Any]) -> str:
             )
 
         # If dictionary has unknown structure or fields were empty strings/lists
-        # Treat this as potentially valid but unparseable, not necessarily an error retrieving
+        # Treat this as potentially valid but unparseable, not necessarily an error
+        # retrieving
         return f"Goal state (unknown format or empty fields): {str(goal_result)[:300]}"
 
     elif isinstance(goal_result, str):
         # If the result was just a string (less common for plainGoal)
         cleaned_str = goal_result.strip()
         if not cleaned_str:
-             return "No goal applicable/available on this line" # Changed message
+            return "No goal applicable/available on this line"  # Changed message
         return cleaned_str
 
     # Python's json.loads maps JSON null to None, handled by the first check.
@@ -297,15 +298,17 @@ def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> Optional[str
         or None if the diagnostic severity is Info or Hint.
     """
     severity_map = {1: "Error", 2: "Warning", 3: "Info", 4: "Hint"}
-    severity_code = diag.get("severity", 0) # Get the numeric severity code
+    severity_code = diag.get("severity", 0)  # Get the numeric severity code
     severity = severity_map.get(severity_code, "Diagnostic")
-    message = diag.get("message", "Unknown diagnostic message.").strip() # Strip whitespace
+    message = diag.get(
+        "message", "Unknown diagnostic message."
+    ).strip()  # Strip whitespace
 
     # If severity is Info (3) or Hint (4) or anything higher, return None
     if severity_code >= 3:
         logger.debug(
             f"Skipping diagnostic (Severity {severity_code}) on line {line_idx + 1}: "
-            f"{message[:50]}..." # Log truncated message
+            f"{message[:50]}..."  # Log truncated message
         )
         return None
 
@@ -313,7 +316,9 @@ def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> Optional[str
     if severity_code == 1 and message.lower().startswith("unsolved goals"):
         # Replace the potentially multi-line message with just the core error
         message = "unsolved goals"
-        logger.debug(f"Simplified 'unsolved goals' diagnostic message for line {line_idx + 1}")
+        logger.debug(
+            f"Simplified 'unsolved goals' diagnostic message for line {line_idx + 1}"
+        )
 
     diag_range = diag.get("range", {})
     start_pos = diag_range.get("start", {})
@@ -329,7 +334,7 @@ def _format_diagnostic_line(diag: Dict[str, Any], line_idx: int) -> Optional[str
     # Retains original newlines in the message
     return (
         f"{severity}: (Reported range L{start_line_disp}:{start_char_disp}"
-        f"-L{end_line_disp}:{end_char_disp}):\n{message}" # Place message on newline(s)
+        f"-L{end_line_disp}:{end_char_disp}):\n{message}"  # Place message on newline(s)
     )
 
 
@@ -379,48 +384,78 @@ async def analyze_lean_failure(
         # [ ... Rest of pre-check logic remains the same ... ]
         logger.info(f"Pre-check: Writing processed code to {temp_precheck_path}")
         temp_precheck_path.write_text(processed_code, encoding="utf-8")
-        logger.info(f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}")
+        logger.info(
+            f"Pre-check: Running: {lean_executable_path} {temp_precheck_filename}"
+        )
         precheck_timeout = max(5, timeout_seconds // 3)
         precheck_env = _get_lean_path_env(lean_executable_path, cwd, shared_lib_path)
         result = await asyncio.to_thread(
             subprocess.run,
             [lean_executable_path, temp_precheck_filename],
-            capture_output=True, text=True, cwd=cwd, timeout=precheck_timeout,
-            encoding="utf-8", errors="replace", env=precheck_env, check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=precheck_timeout,
+            encoding="utf-8",
+            errors="replace",
+            env=precheck_env,
+            check=False,
         )
         error_pattern = re.compile(r".*?:(\d+):\d+:\s*error:")
         output_to_scan = result.stdout + "\n" + result.stderr
         output_lines = output_to_scan.splitlines()
-        logger.debug(f"Pre-check stdout/stderr ({len(output_lines)} lines): {output_to_scan[:500]}...")
-        for line_num_str in (match.group(1) for match in (error_pattern.match(line) for line in output_lines) if match):
+        logger.debug(
+            f"Pre-check stdout/stderr ({len(output_lines)} lines): "
+            f"{output_to_scan[:500]}..."
+        )
+        for line_num_str in (
+            match.group(1)
+            for match in (error_pattern.match(line) for line in output_lines)
+            if match
+        ):
             try:
                 first_compiler_error_line = int(line_num_str)
-                logger.info(f"Pre-check: Found first compiler error on line: {first_compiler_error_line} (in processed code)")
+                logger.info(
+                    "Pre-check: Found first compiler error on line: "
+                    f"{first_compiler_error_line} (in processed code)"
+                )
                 break
             except ValueError:
-                logger.warning(f"Pre-check: Failed to parse line number from match: {line_num_str}")
+                logger.warning(
+                    f"Pre-check: Failed to parse line number from match: {line_num_str}"
+                )
         if first_compiler_error_line == float("inf"):
-            logger.info("Pre-check: No errors found matching pattern in compiler output.")
+            logger.info(
+                "Pre-check: No errors found matching pattern in compiler output."
+            )
     except FileNotFoundError:
-        logger.error(f"Pre-check Failed: Lean executable not found at '{lean_executable_path}'.")
+        logger.error(
+            f"Pre-check Failed: Lean executable not found at '{lean_executable_path}'."
+        )
     except subprocess.TimeoutExpired:
         logger.warning(f"Pre-check: Timed out after {precheck_timeout}s.")
     except Exception as precheck_e:
-        logger.warning(f"Pre-check: Failed with unexpected error: {precheck_e}", exc_info=True)
+        logger.warning(
+            f"Pre-check: Failed with unexpected error: {precheck_e}", exc_info=True
+        )
     finally:
         if temp_precheck_path.exists():
             try:
                 temp_precheck_path.unlink()
                 logger.debug(f"Pre-check: Cleaned up {temp_precheck_path}")
             except OSError as e:
-                logger.warning(f"Pre-check: Could not delete temp file {temp_precheck_path}: {e}")
+                logger.warning(
+                    f"Pre-check: Could not delete temp file {temp_precheck_path}: {e}"
+                )
     # --- End of Pre-check ---
-
 
     # --- Initialize LSP Client [ ... No changes needed here ... ] ---
     client_timeout = max(15, timeout_seconds // 2)
     client = LeanLspClient(
-        lean_executable_path, cwd, timeout=client_timeout, shared_lib_path=shared_lib_path
+        lean_executable_path,
+        cwd,
+        timeout=client_timeout,
+        shared_lib_path=shared_lib_path,
     )
 
     # --- Analysis Variables [ ... No changes needed here ... ] ---
@@ -437,14 +472,16 @@ async def analyze_lean_failure(
 
     # Wrap core LSP interaction in try/finally to ensure client close
     final_output_lines: List[str] = []
-    code_lines_buffer: List[str] = [] # Define earlier for use in goal loop and finally block
+    code_lines_buffer: List[
+        str
+    ] = []  # Define earlier for use in goal loop and finally block
 
     try:
         # --- Start LSP and Open Document [ ... No changes needed here ... ] ---
         logger.info("Starting LSP client...")
         await client.start_server()
         await client.initialize()
-        code_lines_buffer = processed_code.splitlines() # Assign here
+        code_lines_buffer = processed_code.splitlines()  # Assign here
         await client.did_open(temp_file_uri, "lean", 1, processed_code)
         logger.info(f"Sent textDocument/didOpen for URI {temp_file_uri}")
 
@@ -458,23 +495,36 @@ async def analyze_lean_failure(
 
         # --- Determine effective error line [ ... No changes needed here ... ] ---
         for diag in collected_diagnostics:
-             if diag.get("severity") == 1:
-                 try:
-                     line_idx = diag.get("range", {}).get("start", {}).get("line", float("inf"))
-                     first_lsp_error_line_idx = min(first_lsp_error_line_idx, float(line_idx))
-                 except (ValueError, TypeError):
-                     logger.warning(f"Could not parse line number from diagnostic: {diag}")
-        effective_error_line_idx = min(float(first_compiler_error_line) - 1, first_lsp_error_line_idx)
+            if diag.get("severity") == 1:
+                try:
+                    line_idx = (
+                        diag.get("range", {}).get("start", {}).get("line", float("inf"))
+                    )
+                    first_lsp_error_line_idx = min(
+                        first_lsp_error_line_idx, float(line_idx)
+                    )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Could not parse line number from diagnostic: {diag}"
+                    )
+        effective_error_line_idx = min(
+            float(first_compiler_error_line) - 1, first_lsp_error_line_idx
+        )
         if effective_error_line_idx != float("inf"):
-             effective_error_line_idx = int(effective_error_line_idx)
-             logger.info(f"Effective first error detected near line index: {effective_error_line_idx} (Line {effective_error_line_idx + 1} in processed code)")
+            effective_error_line_idx = int(effective_error_line_idx)
+            logger.info(
+                "Effective first error detected near line index: "
+                f"{effective_error_line_idx} (Line {effective_error_line_idx + 1} "
+                "in processed code)"
+            )
         else:
-             logger.info("No errors detected from pre-check or initial LSP diagnostics.")
-             effective_error_line_idx = -1
+            logger.info("No errors detected from pre-check or initial LSP diagnostics.")
+            effective_error_line_idx = -1
 
         # --- Goal fetching loop ---
         logger.info(
-            "Starting line-by-line goal annotation (skipping blank/comment-only lines)..." # Updated log message
+            "Starting line-by-line goal annotation (skipping blank/comment-only "
+            "lines)..."  # Updated log message (kept within limit)
         )
         goal_lines_buffer: List[Optional[str]] = []  # Store cleaned goals or None
 
@@ -489,15 +539,13 @@ async def analyze_lean_failure(
                 logger.debug(f"Skipping goal fetch for blank/comment line {i + 1}")
                 # Append None, as no goal should be displayed for this line
                 goal_lines_buffer.append(None)
-                continue # Move to the next line
+                continue  # Move to the next line
 
             # --- Goal fetching logic (only runs for non-comment/non-blank lines) ---
-            goal_result = None # Define here for scope
+            goal_result = None  # Define here for scope
             try:
                 # Attempt to get the goal state for the current line
-                goal_result = await client.get_goal(
-                    temp_file_uri, line=i, character=0
-                )
+                goal_result = await client.get_goal(temp_file_uri, line=i, character=0)
 
                 if goal_result is not None:
                     parsed_goal = _parse_goal_result(goal_result)
@@ -509,10 +557,10 @@ async def analyze_lean_failure(
                             f"{i + 1}: {parsed_goal}"
                         )
                     elif parsed_goal.startswith("Goal state (unknown format"):
-                         logger.warning(
+                        logger.warning(
                             "Goal parsing resulted in unknown format for line "
                             f"{i + 1}: {parsed_goal}"
-                         )
+                        )
                     else:
                         # Use the cleaned, potentially multi-line goal string
                         cleaned_goal, _ = _clean_goal_string(parsed_goal)
@@ -521,9 +569,17 @@ async def analyze_lean_failure(
                         if cleaned_goal and cleaned_goal != "goals accomplished":
                             goal_to_append = cleaned_goal
                         elif cleaned_goal == "goals accomplished":
-                            logger.debug(f"Goals accomplished at line {i+1}, not storing explicit goal.")
+                            logger.debug(
+                                "Goals accomplished at line %d, not storing explicit "
+                                "goal.",
+                                i + 1,
+                            )
                         else:
-                            logger.debug(f"Empty cleaned goal after parsing for line {i+1}, skipping.")
+                            logger.debug(
+                                "Empty cleaned goal after parsing for line %d, "
+                                "skipping.",
+                                i + 1,
+                            )
 
                 # If goal_result was None initially, goal_to_append remains None.
 
@@ -583,7 +639,7 @@ async def analyze_lean_failure(
                     # Get the potentially multi-line formatted diagnostic string
                     diag_string = _format_diagnostic_line(diag, start_line_idx)
 
-                    if diag_string is not None: # Only store Errors/Warnings
+                    if diag_string is not None:  # Only store Errors/Warnings
                         diagnostics_by_line[start_line_idx].append(diag_string)
                         formatted_diags_count += 1
                 else:
@@ -594,7 +650,6 @@ async def analyze_lean_failure(
             logger.info(
                 f"Processed {formatted_diags_count} unique diagnostics into line map."
             )
-
 
         # --- Assemble final output [ ** MODIFIED ** ] ---
         logger.info("Assembling final annotated output...")
@@ -612,7 +667,9 @@ async def analyze_lean_failure(
             if goal_content is not None:
                 # Add a separator/header before the goal content
                 final_output_lines.append("--- Goal ---")
-                final_output_lines.append(goal_content) # Append raw multi-line goal string
+                final_output_lines.append(
+                    goal_content
+                )  # Append raw multi-line goal string
 
             # 2. Add Diagnostics (if any) on their own lines
             if i in diagnostics_by_line:
@@ -639,7 +696,9 @@ async def analyze_lean_failure(
         analysis_succeeded = False
     except asyncio.TimeoutError as e:
         logger.error(f"LSP Overall Timeout Error during analysis: {e}")
-        final_output_lines.append(f"--- Error: LSP Timeout during analysis setup: {e} ---")
+        final_output_lines.append(
+            f"--- Error: LSP Timeout during analysis setup: {e} ---"
+        )
         analysis_succeeded = False
     except Exception as e:
         logger.exception(f"Unhandled exception during LSP analysis orchestration: {e}")
@@ -663,12 +722,14 @@ async def analyze_lean_failure(
         final_output_lines.insert(0, "--- LSP Analysis Incomplete ---")
 
     # Append the original fallback error message without prefixing/padding
-    final_output_lines.append("\n--- Build System Output ---") # Clear header
+    final_output_lines.append("\n--- Build System Output ---")  # Clear header
     if fallback_error and fallback_error.strip():
         # Append raw lines from the fallback error
         final_output_lines.extend(fallback_error.strip().splitlines())
     else:
-        final_output_lines.append("(Original build system output not provided or empty)")
+        final_output_lines.append(
+            "(Original build system output not provided or empty)"
+        )
 
     # --- Return Final Result ---
     return "\n".join(final_output_lines)

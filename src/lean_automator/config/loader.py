@@ -6,9 +6,10 @@ This module provides functions to load configuration settings from YAML files
 (defaults), JSON files (e.g., costs), and environment variables (overrides, secrets).
 It automatically determines the paths for the default configuration files
 (`config.yml`, `model_costs.json`) by:
-1. Checking specific environment variables (`LEAN_AUTOMATOR_CONFIG_FILE`, `LEAN_AUTOMATOR_COSTS_FILE`).
-2. Searching upwards from this file's location for a project root marker (`pyproject.toml`)
-   and looking for the files in that root directory.
+1. Checking specific environment variables (`LEAN_AUTOMATOR_CONFIG_FILE`,
+   `LEAN_AUTOMATOR_COSTS_FILE`).
+2. Searching upwards from this file's location for a project root marker
+   (`pyproject.toml`) and looking for the files in that root directory.
 3. As a fallback, looking in the current working directory (with a warning).
 
 It exposes the loaded configuration via a singleton dictionary `APP_CONFIG`
@@ -19,7 +20,7 @@ from the environment.
 import json
 import logging
 import os
-import pathlib # Added for path manipulation
+import pathlib  # Added for path manipulation
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import yaml
@@ -37,7 +38,7 @@ if not logging.getLogger().hasHandlers():
 # Default filenames
 DEFAULT_CONFIG_FILENAME = "config.yml"
 DEFAULT_COSTS_FILENAME = "model_costs.json"
-PROJECT_ROOT_MARKER = "pyproject.toml" # File to indicate project root
+PROJECT_ROOT_MARKER = "pyproject.toml"  # File to indicate project root
 
 # Environment variables for specifying config file paths explicitly
 ENV_CONFIG_PATH = "LEAN_AUTOMATOR_CONFIG_FILE"
@@ -72,12 +73,17 @@ def _find_project_root(
     current_path = start_path.resolve()
     while True:
         if (current_path / marker_filename).is_file():
-            logger.debug(f"Found project root marker '{marker_filename}' at '{current_path}'")
+            logger.debug(
+                f"Found project root marker '{marker_filename}' at '{current_path}'"
+            )
             return current_path
         parent_path = current_path.parent
         if parent_path == current_path:
             # Reached the filesystem root
-            logger.debug(f"Project root marker '{marker_filename}' not found searching from '{start_path}'.")
+            logger.debug(
+                f"Project root marker '{marker_filename}' not found searching from "
+                f"'{start_path}'."
+            )
             return None
         current_path = parent_path
 
@@ -103,8 +109,8 @@ def _update_nested_dict(d: Dict[str, Any], keys: List[str], value: Any):
                 f"while setting path '{'.'.join(keys)}', but found type {type(child)}. "
                 f"Cannot apply value '{value}'."
             )
-            return # Stop processing this override
-        node = child # Move deeper
+            return  # Stop processing this override
+        node = child  # Move deeper
 
     # Set the final value
     final_key = keys[-1]
@@ -119,7 +125,8 @@ def load_configuration(
 
     Determines the paths for the default configuration file (`config.yml`)
     and costs file (`model_costs.json`) using the following priority:
-    1. Environment variables: `LEAN_AUTOMATOR_CONFIG_FILE` and `LEAN_AUTOMATOR_COSTS_FILE`.
+    1. Environment variables: `LEAN_AUTOMATOR_CONFIG_FILE` and
+       `LEAN_AUTOMATOR_COSTS_FILE`.
     2. Project Root Search: Looks for `pyproject.toml` upwards from this loader's
        directory and constructs paths relative to that root.
     3. Current Working Directory (Fallback): If neither of the above yields a path,
@@ -154,10 +161,16 @@ def load_configuration(
 
     if env_config_path_str:
         effective_config_path = pathlib.Path(env_config_path_str)
-        logger.info(f"Using config path from environment variable {ENV_CONFIG_PATH}: '{effective_config_path}'")
+        logger.info(
+            f"Using config path from environment variable {ENV_CONFIG_PATH}: "
+            f"'{effective_config_path}'"
+        )
     if env_costs_path_str:
         effective_costs_path = pathlib.Path(env_costs_path_str)
-        logger.info(f"Using costs path from environment variable {ENV_COSTS_PATH}: '{effective_costs_path}'")
+        logger.info(
+            f"Using costs path from environment variable {ENV_COSTS_PATH}: "
+            f"'{effective_costs_path}'"
+        )
 
     # 2. Find Project Root (if paths not set by env vars)
     if effective_config_path is None or effective_costs_path is None:
@@ -167,10 +180,14 @@ def load_configuration(
             logger.info(f"Determined project root: '{project_root}'")
             if effective_config_path is None:
                 effective_config_path = project_root / DEFAULT_CONFIG_FILENAME
-                logger.info(f"Derived config path from project root: '{effective_config_path}'")
+                logger.info(
+                    f"Derived config path from project root: '{effective_config_path}'"
+                )
             if effective_costs_path is None:
                 effective_costs_path = project_root / DEFAULT_COSTS_FILENAME
-                logger.info(f"Derived costs path from project root: '{effective_costs_path}'")
+                logger.info(
+                    f"Derived costs path from project root: '{effective_costs_path}'"
+                )
         else:
             logger.warning(
                 f"Could not find project root marker '{PROJECT_ROOT_MARKER}'. "
@@ -180,35 +197,48 @@ def load_configuration(
             cwd = pathlib.Path.cwd()
             if effective_config_path is None:
                 effective_config_path = cwd / DEFAULT_CONFIG_FILENAME
-                logger.info(f"Using fallback config path in CWD: '{effective_config_path}'")
+                logger.info(
+                    f"Using fallback config path in CWD: '{effective_config_path}'"
+                )
             if effective_costs_path is None:
                 effective_costs_path = cwd / DEFAULT_COSTS_FILENAME
-                logger.info(f"Using fallback costs path in CWD: '{effective_costs_path}'")
+                logger.info(
+                    f"Using fallback costs path in CWD: '{effective_costs_path}'"
+                )
 
     # Ensure paths are resolved before use (makes error messages clearer)
     if effective_config_path:
-         effective_config_path = effective_config_path.resolve()
+        effective_config_path = effective_config_path.resolve()
     if effective_costs_path:
-         effective_costs_path = effective_costs_path.resolve()
+        effective_costs_path = effective_costs_path.resolve()
 
     # --- Load Base YAML Configuration ---
     if effective_config_path:
         try:
             with open(effective_config_path, encoding="utf-8") as f:
                 loaded_yaml = yaml.safe_load(f)
-                config = loaded_yaml if isinstance(loaded_yaml, dict) else {} # Ensure it's a dict
+                config = (
+                    loaded_yaml if isinstance(loaded_yaml, dict) else {}
+                )  # Ensure it's a dict
             logger.info(f"Loaded base config from '{effective_config_path}'.")
         except FileNotFoundError:
             logger.warning(f"Base config file '{effective_config_path}' not found.")
         except yaml.YAMLError as e:
-            logger.error(f"Error parsing YAML '{effective_config_path}': {e}", exc_info=True)
-            return {} # Critical error parsing base config, return empty
+            logger.error(
+                f"Error parsing YAML '{effective_config_path}': {e}", exc_info=True
+            )
+            return {}  # Critical error parsing base config, return empty
         except Exception as e:
-             logger.error(f"Unexpected error loading '{effective_config_path}': {e}", exc_info=True)
-             return {}
+            logger.error(
+                f"Unexpected error loading '{effective_config_path}': {e}",
+                exc_info=True,
+            )
+            return {}
     else:
-        logger.error("Could not determine a valid path for the base configuration file.")
-        return {} # Cannot proceed without base config path
+        logger.error(
+            "Could not determine a valid path for the base configuration file."
+        )
+        return {}  # Cannot proceed without base config path
 
     # --- Load and Merge JSON Costs Data ---
     if effective_costs_path:
@@ -216,31 +246,42 @@ def load_configuration(
             with open(effective_costs_path, encoding="utf-8") as f:
                 model_costs = json.load(f)
             if "costs" not in config or not isinstance(config.get("costs"), dict):
-                config["costs"] = {} # Ensure 'costs' key exists and is a dict
+                config["costs"] = {}  # Ensure 'costs' key exists and is a dict
             # Safely update, preferring loaded costs over potential existing values
             config["costs"].update(model_costs if isinstance(model_costs, dict) else {})
             logger.info(f"Loaded and merged costs from '{effective_costs_path}'.")
         except FileNotFoundError:
             logger.warning(f"Costs file '{effective_costs_path}' not found.")
-            config.setdefault("costs", {}) # Ensure 'costs' key exists even if file not found
+            config.setdefault(
+                "costs", {}
+            )  # Ensure 'costs' key exists even if file not found
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing JSON costs '{effective_costs_path}': {e}", exc_info=True)
-            config.setdefault("costs", {}) # Ensure 'costs' key exists after error
+            logger.error(
+                f"Error parsing JSON costs '{effective_costs_path}': {e}", exc_info=True
+            )
+            config.setdefault("costs", {})  # Ensure 'costs' key exists after error
         except Exception as e:
-            logger.error(f"Unexpected error loading '{effective_costs_path}': {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error loading '{effective_costs_path}': {e}", exc_info=True
+            )
             config.setdefault("costs", {})
     else:
-        logger.warning("Could not determine a valid path for the costs file. 'costs' section may be empty.")
-        config.setdefault("costs", {}) # Ensure 'costs' key exists
+        logger.warning(
+            "Could not determine a valid path for the costs file. "
+            "'costs' section may be empty."
+        )
+        config.setdefault("costs", {})  # Ensure 'costs' key exists
 
     # --- Load .env file into environment variables ---
     try:
         # Pass override=True if you want .env to override existing env vars
         loaded_env = load_dotenv(dotenv_path=dotenv_path, verbose=True, override=True)
         if loaded_env:
-            logger.info(".env file loaded into environment variables (overriding existing).")
+            logger.info(
+                ".env file loaded into environment variables (overriding existing)."
+            )
         else:
-             logger.debug(".env file not found or empty.")
+            logger.debug(".env file not found or empty.")
     except Exception as e:
         # Catch potential errors during dotenv loading (e.g., permission issues)
         logger.error(f"Error loading .env file: {e}", exc_info=True)
@@ -257,8 +298,8 @@ def load_configuration(
                 # Update the nested dictionary
                 _update_nested_dict(config, config_keys, typed_value)
                 logger.info(
-                    f"Applied value override: '{'.'.join(config_keys)}' = '{typed_value}' "
-                    f"(from env '{env_var}')"
+                    f"Applied value override: '{'.'.join(config_keys)}' = "
+                    f"'{typed_value}' (from env '{env_var}')"
                 )
                 override_count += 1
             except ValueError:
@@ -268,7 +309,8 @@ def load_configuration(
                 )
             except Exception as e:
                 logger.error(
-                    f"Value override error: Unexpected issue applying env var '{env_var}': {e}",
+                    f"Value override error: Unexpected issue applying env var "
+                    f"'{env_var}': {e}",
                     exc_info=True,
                 )
     if override_count > 0:
@@ -287,6 +329,7 @@ APP_CONFIG: Dict[str, Any] = load_configuration()
 
 # --- Direct Accessors for Sensitive/Specific Environment Variables ---
 # These remain unchanged as they directly access environment variables.
+
 
 def get_gemini_api_key() -> Optional[str]:
     """Retrieves the Gemini API Key directly from environment variables.
@@ -321,7 +364,9 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s: [%(name)s] %(message)s"
     )
-    logger.setLevel(logging.INFO) # Ensure this module's logger level is also appropriate
+    logger.setLevel(
+        logging.INFO
+    )  # Ensure this module's logger level is also appropriate
 
     print("\n--- Determining Config Paths ---")
     # Re-run part of the logic to show how paths are determined in standalone mode
@@ -329,22 +374,33 @@ if __name__ == "__main__":
     test_costs_path: Optional[pathlib.Path] = None
     env_cfg = os.getenv(ENV_CONFIG_PATH)
     env_cst = os.getenv(ENV_COSTS_PATH)
-    if env_cfg: test_config_path = pathlib.Path(env_cfg)
-    if env_cst: test_costs_path = pathlib.Path(env_cst)
+    if env_cfg:
+        test_config_path = pathlib.Path(env_cfg)
+    if env_cst:
+        test_costs_path = pathlib.Path(env_cst)
 
     if not test_config_path or not test_costs_path:
         test_root = _find_project_root(pathlib.Path(__file__).parent)
         if test_root:
-             if not test_config_path: test_config_path = test_root / DEFAULT_CONFIG_FILENAME
-             if not test_costs_path: test_costs_path = test_root / DEFAULT_COSTS_FILENAME
+            if not test_config_path:
+                test_config_path = test_root / DEFAULT_CONFIG_FILENAME
+            if not test_costs_path:
+                test_costs_path = test_root / DEFAULT_COSTS_FILENAME
         else:
             test_cwd = pathlib.Path.cwd()
-            if not test_config_path: test_config_path = test_cwd / DEFAULT_CONFIG_FILENAME
-            if not test_costs_path: test_costs_path = test_cwd / DEFAULT_COSTS_FILENAME
+            if not test_config_path:
+                test_config_path = test_cwd / DEFAULT_CONFIG_FILENAME
+            if not test_costs_path:
+                test_costs_path = test_cwd / DEFAULT_COSTS_FILENAME
 
-    print(f"Config Path Used: {test_config_path.resolve() if test_config_path else 'Not Determined'}")
-    print(f"Costs Path Used: {test_costs_path.resolve() if test_costs_path else 'Not Determined'}")
-
+    print(
+        "Config Path Used: "
+        f"{test_config_path.resolve() if test_config_path else 'Not Determined'}"
+    )
+    print(
+        "Costs Path Used: "
+        f"{test_costs_path.resolve() if test_costs_path else 'Not Determined'}"
+    )
 
     print("\n--- Loaded Configuration (APP_CONFIG) ---")
     import pprint
@@ -357,7 +413,6 @@ if __name__ == "__main__":
     # Or just print the already loaded one:
     pprint.pprint(APP_CONFIG)
 
-
     print("\n--- Accessing Values Example ---")
     # Access from the already loaded APP_CONFIG
     db_path = APP_CONFIG.get("database", {}).get("kb_db_path", "N/A")
@@ -368,7 +423,6 @@ if __name__ == "__main__":
     # Safely access potentially missing cost info
     cost_info = APP_CONFIG.get("costs", {}).get("gemini-1.5-pro-preview-0409", {})
     print(f"Costs for gemini-1.5-pro-preview-0409: {cost_info if cost_info else 'N/A'}")
-
 
     print("\n--- Accessing Secrets/Paths Directly Example ---")
     api_key = get_gemini_api_key()
