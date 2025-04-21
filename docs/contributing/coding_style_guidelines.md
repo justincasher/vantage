@@ -6,6 +6,32 @@ Consistency in code style is crucial for readability and maintainability. This p
 
 [**Ruff**](https://docs.astral.sh/ruff/) is used as the primary tool for both **linting** (checking for code errors and style violations) and **formatting** (automatically applying code style). Configuration is defined in the `pyproject.toml` file under the `[tool.ruff]` section.
 
+## Running Ruff
+
+To ensure your code adheres to the project's standards, you can run Ruff manually from your terminal. It's recommended to run these commands before committing your changes.
+
+* **Checking for errors and style violations (Linting):**
+    To scan the entire project (starting from the current directory `.`) for issues based on the rules defined in `pyproject.toml`, run:
+    ```bash
+    ruff check .
+    ```
+    You can also check specific files or directories by replacing `.` with the desired path:
+    ```bash
+    ruff check path/to/your/file.py
+    ruff check path/to/your/directory/
+    ```
+
+* **Automatically formatting your code:**
+    To automatically reformat code in the entire project (starting from the current directory `.`) to comply with the configured style, run:
+    ```bash
+    ruff format .
+    ```
+    Similarly, you can format specific files or directories:
+    ```bash
+    ruff format path/to/your/file.py
+    ruff format path/to/your/directory/
+    ```
+
 ## Code Formatting: PEP 8 enforced by Ruff
 
 The project aims for compliance with the [**PEP 8 — Style Guide for Python Code**](https://peps.python.org/pep-0008/), with enforcement and specific settings managed by Ruff.
@@ -74,3 +100,4 @@ def example_function(param1, param2):
   result = float(param1 + param2_numeric)
 
   return result
+```
