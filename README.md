@@ -1,5 +1,8 @@
 # Vantage
 
+> [!WARNING]
+> This project is incomplete and no longer being worked on for the time being. See [LeanExplore](https://github.com/justincasher/lean-explore) for my Lean search engine.
+
 > *The essence of mathematical insight often comes from finding a new vantage point.*
 
 Vantage envisions a future where mathematical knowledge is navigated as a vast, interconnected graph. This Python project is building the foundations for autoformalization software where each mathematical statement constitutes a node. By employing Lean 4 for rigorous verification and utilizing large language models to drive the autoformalization process, Vantage targets a highly parallelized approach. The ultimate ambition is to map, organize, and accelerate the exploration of the ever-expanding universe of mathematics with unparalleled accuracy and efficiency.
